@@ -583,15 +583,26 @@ router.post('/daily-recommendations/retry', secureAdminEmailGuard, async (req, r
 router.get('/daily-recommendations/preview', secureAdminEmailGuard, async (req, res) => {
   try {
     const sampleUser = {
-      id: 'preview_user',
+      id: req.query.id || 'preview_user',
       name: req.query.name || 'FoodieBite Explorer',
       email: req.query.email || 'preview@foodiebite.com',
       dietType: req.query.dietType || 'Vegetarian',
       spiceLevel: req.query.spiceLevel || 'Medium',
-      healthGoals: req.query.healthGoals ? req.query.healthGoals.split(',') : ['healthy_eating'],
-      allergies: req.query.allergies ? req.query.allergies.split(',') : []
+      cuisines: req.query.cuisines ? req.query.cuisines.split(',').map(c => c.trim()) : ['indian'],
+      healthGoals: req.query.healthGoals ? req.query.healthGoals.split(',').map(g => g.trim()) : ['healthy_eating'],
+      allergies: req.query.allergies ? req.query.allergies.split(',').map(a => a.trim()) : [],
+      city: req.query.city || 'Chennai'
     };
-    const recData = dailyRecommendationService.buildDailyRecommendationForUser(sampleUser);
+    const options = {};
+    if (req.query.temperature) {
+      options.weather = {
+        temperature: parseFloat(req.query.temperature),
+        condition: req.query.condition || 'Clear',
+        category: req.query.weatherCategory || 'warm',
+        locationName: sampleUser.city
+      };
+    }
+    const recData = await dailyRecommendationService.buildDailyRecommendationForUser(sampleUser, options);
     return res.status(200).json({ success: true, ...recData });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });

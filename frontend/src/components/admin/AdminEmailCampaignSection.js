@@ -1040,6 +1040,51 @@ export default function AdminEmailCampaignSection({ users = [], onRefreshUsers }
             </View>
           </View>
 
+          {/* ── PERSONALIZATION BREAKDOWN ── */}
+          {dailyStatus?.lastRun?.personalizationStats && (
+            <View style={{
+              backgroundColor: 'rgba(255, 107, 53, 0.05)',
+              borderColor: 'rgba(255, 107, 53, 0.25)',
+              borderWidth: 1,
+              borderRadius: 10,
+              padding: 14,
+              marginBottom: 16
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <Sparkles size={16} color="#FF6B35" />
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>
+                  Latest Run Personalization Breakdown
+                </Text>
+                <Text style={{ color: '#94a3b8', fontSize: 11, marginLeft: 'auto' }}>
+                  Context & Dietary Engine
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                <View style={{ backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.3)', borderWidth: 1, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}>
+                  <Text style={{ color: '#34D399', fontSize: 11, fontWeight: '600' }}>🌱 Vegetarian: {dailyStatus.lastRun.personalizationStats.vegetarian || 0}</Text>
+                </View>
+                <View style={{ backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.3)', borderWidth: 1, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}>
+                  <Text style={{ color: '#34D399', fontSize: 11, fontWeight: '600' }}>🌿 Vegan: {dailyStatus.lastRun.personalizationStats.vegan || 0}</Text>
+                </View>
+                <View style={{ backgroundColor: 'rgba(245, 158, 11, 0.12)', borderColor: 'rgba(245, 158, 11, 0.3)', borderWidth: 1, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}>
+                  <Text style={{ color: '#FBBF24', fontSize: 11, fontWeight: '600' }}>🥚 Eggetarian: {dailyStatus.lastRun.personalizationStats.eggetarian || 0}</Text>
+                </View>
+                <View style={{ backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)', borderWidth: 1, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}>
+                  <Text style={{ color: '#F87171', fontSize: 11, fontWeight: '600' }}>🍗 Non-Veg: {dailyStatus.lastRun.personalizationStats.nonVegetarian || 0}</Text>
+                </View>
+                <View style={{ backgroundColor: 'rgba(56, 189, 248, 0.12)', borderColor: 'rgba(56, 189, 248, 0.3)', borderWidth: 1, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}>
+                  <Text style={{ color: '#38BDF8', fontSize: 11, fontWeight: '600' }}>🌦️ Weather-Aware: {dailyStatus.lastRun.personalizationStats.weatherAware || 0}</Text>
+                </View>
+                <View style={{ backgroundColor: 'rgba(255, 107, 53, 0.12)', borderColor: 'rgba(255, 107, 53, 0.3)', borderWidth: 1, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}>
+                  <Text style={{ color: '#FF8A5B', fontSize: 11, fontWeight: '600' }}>🍁 Seasonal-Aware: {dailyStatus.lastRun.personalizationStats.seasonalAware || 0}</Text>
+                </View>
+                <View style={{ backgroundColor: 'rgba(168, 85, 247, 0.12)', borderColor: 'rgba(168, 85, 247, 0.3)', borderWidth: 1, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10 }}>
+                  <Text style={{ color: '#C084FC', fontSize: 11, fontWeight: '600' }}>🩺 Consented Medical Insights: {dailyStatus.lastRun.personalizationStats.medicalConsentAware || 0}</Text>
+                </View>
+              </View>
+            </View>
+          )}
+
           {/* ── CONTROLS ROW: SCHEDULE SETTINGS & IMMEDIATE ACTIONS ── */}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14 }}>
             {/* Schedule Selector Card */}

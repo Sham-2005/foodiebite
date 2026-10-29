@@ -7,7 +7,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node src/config/seed.js",
-    "test": "node src/services/__tests__/phase1SafetyRegression.test.js && node src/services/__tests__/phase2Integration.test.js && node src/services/__tests__/phase3MedicalIntegration.test.js && node src/services/__tests__/phase4ContextIntegration.test.js && node src/services/__tests__/phase5BehaviorIntegration.test.js && node src/services/__tests__/confidenceScoring.test.js && node src/services/__tests__/recommendationRegression.test.js && node src/services/__tests__/aiEvaluationDataset.test.js && node src/services/__tests__/brevoIntegration.test.js && node src/services/__tests__/adminSecurityAndManagement.test.js && node src/services/__tests__/unitConversionService.test.js",
+    "test": "node src/services/__tests__/phase1SafetyRegression.test.js && node src/services/__tests__/phase2Integration.test.js && node src/services/__tests__/phase3MedicalIntegration.test.js && node src/services/__tests__/phase4ContextIntegration.test.js && node src/services/__tests__/phase5BehaviorIntegration.test.js && node src/services/__tests__/confidenceScoring.test.js && node src/services/__tests__/recommendationRegression.test.js && node src/services/__tests__/aiEvaluationDataset.test.js && node src/services/__tests__/brevoIntegration.test.js && node src/services/__tests__/adminSecurityAndManagement.test.js && node src/services/__tests__/unitConversionService.test.js && node src/services/__tests__/dailyPersonalizedEmail.test.js",
     "benchmark": "node src/services/__tests__/stressTest.test.js"
   },
   "dependencies": {

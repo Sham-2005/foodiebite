@@ -160,6 +160,7 @@ async function getStatus() {
     lastRun,
     isJobRunning: dailyRecommendationService.isJobRunning(),
     eligibleRecipientsCount: eligibleData.eligible.length,
+    personalizationStats: lastRun?.personalizationStats || null,
     recentRuns: history
   };
 }
