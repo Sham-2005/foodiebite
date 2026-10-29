@@ -1,0 +1,250 @@
+:root {
+  --bg: #0f1115;
+  --surface: #171a20;
+  --surface-2: #20242c;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #f8fafc;
+  --muted: #a0a7b4;
+  --muted-2: #6f7785;
+  --orange: #ff6b35;
+  --orange-2: #ff8c5a;
+  --danger: #ff4d6d;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.26);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+html, body, #root {
+  min-height: 100%;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100vh;
+  min-height: 100svh;
+  margin: 0;
+  padding: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(255, 107, 53, 0.16), transparent 34rem),
+    linear-gradient(135deg, #0c0e12 0%, #141821 100%);
+  color: var(--text);
+  text-rendering: optimizeLegibility;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 999px; }
+
+a { text-decoration: none; color: inherit; }
+button, input, select, textarea { font: inherit; }
+button {
+  border: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+button:disabled { cursor: not-allowed; }
+button:focus-visible, input:focus-visible, [role="button"]:focus-visible {
+  outline: 2px solid rgba(255, 107, 53, 0.72);
+  outline-offset: 2px;
+}
+input, select, textarea { outline: none; }
+img,
+picture,
+video,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+img,
+video {
+  height: auto;
+}
+
+.responsive-media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.app-shell {
+  min-height: 100vh;
+  min-height: 100svh;
+  background: transparent;
+  width: 100%;
+}
+
+.phone-frame {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100svh;
+  margin: 0 auto;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 18rem),
+    #111318;
+  box-shadow: var(--shadow);
+  position: relative;
+}
+
+.scroll-row {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scroll-row::-webkit-scrollbar { display: none; }
+
+.tap-card, .tap-button {
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, opacity 160ms ease;
+}
+.tap-card:hover, .tap-button:hover {
+  transform: translateY(-1px);
+}
+.tap-card:active, .tap-button:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.food-card-media {
+  aspect-ratio: 4 / 3;
+  min-height: 96px;
+  max-height: 132px;
+}
+
+.food-row-media {
+  width: clamp(58px, 18vw, 74px);
+  aspect-ratio: 1;
+}
+
+.restaurant-row-media {
+  width: clamp(58px, 16vw, 70px);
+  aspect-ratio: 1;
+}
+
+.food-detail-hero {
+  height: clamp(220px, 48svh, 330px);
+}
+
+.onboarding-media {
+  height: clamp(240px, 46svh, 360px);
+}
+
+.map-media {
+  height: clamp(150px, 34vw, 210px);
+}
+
+@media (max-width: 360px) {
+  .food-card-media {
+    min-height: 88px;
+  }
+
+  .food-row-media,
+  .restaurant-row-media {
+    width: 56px;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-30px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Responsive Food Grid (Search Page & Recommendations)
+   Mobile: 2 cols | Tablet: 3 cols | Desktop: 4 cols | Large: 5 cols
+   ───────────────────────────────────────────────────────────── */
+.responsive-food-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* Tablet (>= 640px) */
+@media (min-width: 640px) {
+  .responsive-food-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 14px !important;
+  }
+}
+
+/* Small desktop / laptop (>= 1024px) */
+@media (min-width: 1024px) {
+  .responsive-food-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 16px !important;
+  }
+}
+
+/* Large desktop (>= 1440px) */
+@media (min-width: 1440px) {
+  .responsive-food-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    gap: 18px !important;
+  }
+}
+
+.responsive-food-grid-item {
+  width: 100% !important;
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.responsive-food-grid-item > * {
+  width: 100% !important;
+  height: 100% !important;
+  flex: 1 !important;
+}
+
+/* Medical Report OCR & Dropzone Styles */
+.medical-dropzone {
+  transition: all 0.2s ease-in-out;
+}
+.medical-dropzone:hover {
+  border-color: rgba(255, 107, 53, 0.7) !important;
+  background-color: rgba(255, 107, 53, 0.04) !important;
+}
+
+.ocr-raw-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  line-height: 1.55 !important;
+  font-size: 12px !important;
+}
+
+/* Respect user reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

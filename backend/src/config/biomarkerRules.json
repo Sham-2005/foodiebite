@@ -1,0 +1,373 @@
+{
+  "version": "1.0.0",
+  "description": "Versioned clinical biomarker threshold rules and dietary recommendation map for FoodieBite",
+  "biomarkers": {
+    "fastingSugar": {
+      "label": "Fasting Blood Sugar",
+      "unit": "mg/dL",
+      "category": "bloodSugar",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 69, "status": "Low", "concern": "Low Blood Sugar", "tag": "hypoglycemia", "severity": "moderate" },
+        { "max": 99, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 125, "status": "High", "concern": "Elevated Blood Sugar", "tag": "prediabetic", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Blood Sugar", "tag": "diabetic", "severity": "high" }
+      ],
+      "foodRules": {
+        "prediabetic": { "limit": ["refined-sugar", "high-glycemic"], "prefer": ["high-fiber", "low-gi"] },
+        "diabetic": { "limit": ["refined-sugar", "high-glycemic"], "prefer": ["high-fiber", "low-gi"] }
+      }
+    },
+    "randomSugar": {
+      "label": "Random Blood Sugar",
+      "unit": "mg/dL",
+      "category": "bloodSugar",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 69, "status": "Low", "concern": "Low Blood Sugar", "tag": "hypoglycemia", "severity": "moderate" },
+        { "max": 139, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 199, "status": "High", "concern": "Elevated Blood Sugar", "tag": "prediabetic", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Blood Sugar", "tag": "diabetic", "severity": "high" }
+      ],
+      "foodRules": {
+        "prediabetic": { "limit": ["refined-sugar", "high-glycemic"], "prefer": ["high-fiber", "low-gi"] },
+        "diabetic": { "limit": ["refined-sugar", "high-glycemic"], "prefer": ["high-fiber", "low-gi"] }
+      }
+    },
+    "hba1c": {
+      "label": "HbA1c",
+      "unit": "%",
+      "category": "bloodSugar",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 5.6, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 6.4, "status": "High", "concern": "Elevated HbA1c", "tag": "prediabetic", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High HbA1c", "tag": "diabetic", "severity": "high" }
+      ],
+      "foodRules": {
+        "prediabetic": { "limit": ["refined-sugar", "high-glycemic"], "prefer": ["high-fiber", "low-gi"] },
+        "diabetic": { "limit": ["refined-sugar", "high-glycemic"], "prefer": ["high-fiber", "low-gi"] }
+      }
+    },
+    "hemoglobin": {
+      "label": "Hemoglobin",
+      "unit": "g/dL",
+      "category": "nutrition",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 9.9, "status": "Critical", "concern": "Very Low Hemoglobin", "tag": "anemia", "severity": "high" },
+        { "max": 11.9, "status": "Low", "concern": "Low Hemoglobin", "tag": "anemia", "severity": "moderate" },
+        { "max": 17.5, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": null, "status": "High", "concern": "Elevated Hemoglobin", "tag": "dehydration-concern", "severity": "low" }
+      ],
+      "foodRules": {
+        "anemia": { "limit": ["tea-coffee-with-meals"], "prefer": ["iron-rich", "vitamin-c-rich"] }
+      }
+    },
+    "vitaminD": {
+      "label": "Vitamin D",
+      "unit": "ng/mL",
+      "category": "vitamins",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 11.9, "status": "Critical", "concern": "Very Low Vitamin D", "tag": "vitamin-d-deficient", "severity": "high" },
+        { "max": 19.9, "status": "Low", "concern": "Low Vitamin D", "tag": "vitamin-d-deficient", "severity": "moderate" },
+        { "max": 50.0, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": null, "status": "High", "concern": "Elevated Vitamin D", "tag": null, "severity": "low" }
+      ],
+      "foodRules": {
+        "vitamin-d-deficient": { "limit": [], "prefer": ["vitamin-d-rich"] }
+      }
+    },
+    "vitaminB12": {
+      "label": "Vitamin B12",
+      "unit": "pg/mL",
+      "category": "vitamins",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 99, "status": "Critical", "concern": "Very Low Vitamin B12", "tag": "vitamin-b12-deficient", "severity": "high" },
+        { "max": 199, "status": "Low", "concern": "Low Vitamin B12", "tag": "vitamin-b12-deficient", "severity": "moderate" },
+        { "max": 900, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": null, "status": "High", "concern": "Elevated Vitamin B12", "tag": null, "severity": "low" }
+      ],
+      "foodRules": {
+        "vitamin-b12-deficient": { "limit": [], "prefer": ["vitamin-b12-rich"] }
+      }
+    },
+    "cholesterol": {
+      "label": "Total Cholesterol",
+      "unit": "mg/dL",
+      "category": "heartHealth",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 199, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 239, "status": "High", "concern": "Elevated Cholesterol", "tag": "high-cholesterol", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Cholesterol", "tag": "high-cholesterol", "severity": "high" }
+      ],
+      "foodRules": {
+        "high-cholesterol": { "limit": ["high-saturated-fat", "trans-fat"], "prefer": ["high-fiber", "low-saturated-fat", "omega-3-rich"] }
+      }
+    },
+    "hdl": {
+      "label": "HDL Cholesterol",
+      "unit": "mg/dL",
+      "category": "heartHealth",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 39, "status": "Low", "concern": "Low HDL Cholesterol", "tag": "low-hdl", "severity": "moderate" },
+        { "max": null, "status": "Normal", "concern": null, "tag": null, "severity": "normal" }
+      ],
+      "foodRules": {
+        "low-hdl": { "limit": ["trans-fat"], "prefer": ["omega-3-rich"] }
+      }
+    },
+    "ldl": {
+      "label": "LDL Cholesterol",
+      "unit": "mg/dL",
+      "category": "heartHealth",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 99, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 159, "status": "High", "concern": "Elevated LDL", "tag": "high-ldl", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High LDL Cholesterol", "tag": "high-ldl", "severity": "high" }
+      ],
+      "foodRules": {
+        "high-ldl": { "limit": ["high-saturated-fat", "trans-fat"], "prefer": ["high-fiber", "low-saturated-fat", "omega-3-rich"] }
+      }
+    },
+    "triglycerides": {
+      "label": "Triglycerides",
+      "unit": "mg/dL",
+      "category": "heartHealth",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 149, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 199, "status": "High", "concern": "Elevated Triglycerides", "tag": "high-triglycerides", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Triglycerides", "tag": "high-triglycerides", "severity": "high" }
+      ],
+      "foodRules": {
+        "high-triglycerides": { "limit": ["refined-sugar", "trans-fat"], "prefer": ["omega-3-rich", "high-fiber"] }
+      }
+    },
+    "creatinine": {
+      "label": "Creatinine",
+      "unit": "mg/dL",
+      "category": "kidneyHealth",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 0.69, "status": "Low", "concern": "Low Creatinine", "tag": null, "severity": "low" },
+        { "max": 1.2, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 1.9, "status": "High", "concern": "Elevated Creatinine", "tag": "kidney-disease", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Creatinine", "tag": "kidney-disease", "severity": "high" }
+      ],
+      "foodRules": {
+        "kidney-disease": { "limit": ["high-sodium"], "prefer": ["low-sodium", "high-fiber", "antioxidant-rich"] }
+      }
+    },
+    "uricAcid": {
+      "label": "Uric Acid",
+      "unit": "mg/dL",
+      "category": "kidneyHealth",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 3.39, "status": "Low", "concern": "Low Uric Acid", "tag": null, "severity": "low" },
+        { "max": 6.8, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 9.0, "status": "High", "concern": "Elevated Uric Acid", "tag": "gout-risk", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Uric Acid", "tag": "gout-risk", "severity": "high" }
+      ],
+      "foodRules": {
+        "gout-risk": { "limit": ["high-purine", "high-sodium"], "prefer": ["low-purine", "high-fiber"] }
+      }
+    },
+    "bmi": {
+      "label": "BMI",
+      "unit": "kg/m²",
+      "category": "weight",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 18.4, "status": "Low", "concern": "Low BMI", "tag": "underweight", "severity": "moderate" },
+        { "max": 24.9, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 29.9, "status": "High", "concern": "Elevated BMI", "tag": "overweight", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High BMI", "tag": "obesity-risk", "severity": "high" }
+      ],
+      "foodRules": {
+        "overweight": { "limit": ["low-fat", "refined-sugar"], "prefer": ["high-fiber", "high-protein"] },
+        "obesity-risk": { "limit": ["low-fat", "refined-sugar"], "prefer": ["high-fiber", "high-protein"] }
+      }
+    },
+    "tsh": {
+      "label": "TSH (Thyroid)",
+      "unit": "mIU/L",
+      "category": "nutrition",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 0.39, "status": "Low", "concern": "Low TSH", "tag": "hyperthyroid", "severity": "moderate" },
+        { "max": 4.5, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 10.0, "status": "High", "concern": "Elevated TSH", "tag": "hypothyroid", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High TSH", "tag": "hypothyroid", "severity": "high" }
+      ],
+      "foodRules": {
+        "hypothyroid": { "limit": ["soy"], "prefer": ["high-fiber"] },
+        "hyperthyroid": { "limit": [], "prefer": ["high-protein"] }
+      }
+    },
+    "sgot": {
+      "label": "SGOT / AST",
+      "unit": "U/L",
+      "category": "liverHealth",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 40, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 80, "status": "High", "concern": "Elevated Liver Enzymes", "tag": "liver-concern", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Liver Enzymes", "tag": "liver-concern", "severity": "high" }
+      ],
+      "foodRules": {
+        "liver-concern": { "limit": ["low-fat", "refined-sugar"], "prefer": ["antioxidant-rich"] }
+      }
+    },
+    "sgpt": {
+      "label": "SGPT / ALT",
+      "unit": "U/L",
+      "category": "liverHealth",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 40, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 80, "status": "High", "concern": "Elevated Liver Enzymes", "tag": "liver-concern", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Liver Enzymes", "tag": "liver-concern", "severity": "high" }
+      ],
+      "foodRules": {
+        "liver-concern": { "limit": ["low-fat", "refined-sugar"], "prefer": ["antioxidant-rich"] }
+      }
+    },
+    "ferritin": {
+      "label": "Ferritin",
+      "unit": "ng/mL",
+      "category": "nutrition",
+      "source": "existing app threshold, unattributed",
+      "ranges": [
+        { "max": 11.9, "status": "Low", "concern": "Low Ferritin", "tag": "iron-deficiency", "severity": "moderate" },
+        { "max": 150.0, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": null, "status": "High", "concern": "Elevated Ferritin", "tag": null, "severity": "low" }
+      ],
+      "foodRules": {
+        "iron-deficiency": { "limit": ["tea-coffee-with-meals"], "prefer": ["iron-rich"] }
+      }
+    },
+    "bilirubin": {
+      "label": "Total Bilirubin",
+      "unit": "mg/dL",
+      "category": "liverHealth",
+      "source": "clinical reference standard",
+      "ranges": [
+        { "max": 1.2, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 2.5, "status": "High", "concern": "Elevated Bilirubin", "tag": "liver-concern", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Bilirubin", "tag": "liver-concern", "severity": "high" }
+      ],
+      "foodRules": {
+        "liver-concern": { "limit": ["low-fat", "refined-sugar"], "prefer": ["antioxidant-rich"] }
+      }
+    },
+    "alp": {
+      "label": "Alkaline Phosphatase (ALP)",
+      "unit": "U/L",
+      "category": "liverHealth",
+      "source": "clinical reference standard",
+      "ranges": [
+        { "max": 43, "status": "Low", "concern": "Low ALP", "tag": null, "severity": "low" },
+        { "max": 147, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 300, "status": "High", "concern": "Elevated ALP", "tag": "liver-concern", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High ALP", "tag": "liver-concern", "severity": "high" }
+      ],
+      "foodRules": {
+        "liver-concern": { "limit": ["low-fat", "refined-sugar"], "prefer": ["antioxidant-rich"] }
+      }
+    },
+    "systolicBp": {
+      "label": "Systolic Blood Pressure",
+      "unit": "mmHg",
+      "category": "heartHealth",
+      "source": "AHA Clinical Guidelines",
+      "ranges": [
+        { "max": 89, "status": "Low", "concern": "Low Systolic BP", "tag": null, "severity": "low" },
+        { "max": 120, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 139, "status": "High", "concern": "Elevated Systolic Blood Pressure", "tag": "hypertension", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Systolic Blood Pressure (Stage 2)", "tag": "hypertension", "severity": "high" }
+      ],
+      "foodRules": {
+        "hypertension": { "limit": ["high-sodium"], "prefer": ["low-sodium", "high-fiber"] }
+      }
+    },
+    "diastolicBp": {
+      "label": "Diastolic Blood Pressure",
+      "unit": "mmHg",
+      "category": "heartHealth",
+      "source": "AHA Clinical Guidelines",
+      "ranges": [
+        { "max": 59, "status": "Low", "concern": "Low Diastolic BP", "tag": null, "severity": "low" },
+        { "max": 80, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 89, "status": "High", "concern": "Elevated Diastolic Blood Pressure", "tag": "hypertension", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Diastolic Blood Pressure", "tag": "hypertension", "severity": "high" }
+      ],
+      "foodRules": {
+        "hypertension": { "limit": ["high-sodium"], "prefer": ["low-sodium", "high-fiber"] }
+      }
+    },
+    "egfr": {
+      "label": "Estimated GFR (eGFR)",
+      "unit": "mL/min/1.73m²",
+      "category": "kidneyHealth",
+      "source": "KDIGO Clinical Guidelines",
+      "ranges": [
+        { "max": 29.9, "status": "Critical", "concern": "Significantly Decreased Kidney Function (Low GFR)", "tag": "kidney-disease", "severity": "high" },
+        { "max": 59.9, "status": "Low", "concern": "Mildly to Moderately Decreased GFR", "tag": "kidney-disease", "severity": "moderate" },
+        { "max": null, "status": "Normal", "concern": null, "tag": null, "severity": "normal" }
+      ],
+      "foodRules": {
+        "kidney-disease": { "limit": ["high-sodium"], "prefer": ["low-sodium", "high-fiber", "antioxidant-rich"] }
+      }
+    },
+    "bun": {
+      "label": "Blood Urea Nitrogen (BUN)",
+      "unit": "mg/dL",
+      "category": "kidneyHealth",
+      "source": "clinical reference standard",
+      "ranges": [
+        { "max": 6.9, "status": "Low", "concern": "Low BUN", "tag": null, "severity": "low" },
+        { "max": 20.0, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": 30.0, "status": "High", "concern": "Elevated Blood Urea Nitrogen", "tag": "kidney-disease", "severity": "moderate" },
+        { "max": null, "status": "Critical", "concern": "High Blood Urea Nitrogen", "tag": "kidney-disease", "severity": "high" }
+      ],
+      "foodRules": {
+        "kidney-disease": { "limit": ["high-sodium"], "prefer": ["low-sodium", "high-fiber", "antioxidant-rich"] }
+      }
+    },
+    "sodium": {
+      "label": "Serum Sodium",
+      "unit": "mmol/L",
+      "category": "kidneyHealth",
+      "source": "clinical reference standard",
+      "ranges": [
+        { "max": 134.9, "status": "Low", "concern": "Low Sodium (Hyponatremia)", "tag": null, "severity": "moderate" },
+        { "max": 145.0, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": null, "status": "High", "concern": "Elevated Sodium (Hypernatremia)", "tag": "hypertension", "severity": "moderate" }
+      ],
+      "foodRules": {
+        "hypertension": { "limit": ["high-sodium"], "prefer": ["low-sodium"] }
+      }
+    },
+    "potassium": {
+      "label": "Serum Potassium",
+      "unit": "mmol/L",
+      "category": "kidneyHealth",
+      "source": "clinical reference standard",
+      "ranges": [
+        { "max": 3.4, "status": "Low", "concern": "Low Potassium (Hypokalemia)", "tag": null, "severity": "moderate" },
+        { "max": 5.0, "status": "Normal", "concern": null, "tag": null, "severity": "normal" },
+        { "max": null, "status": "High", "concern": "Elevated Potassium (Hyperkalemia)", "tag": "kidney-disease", "severity": "moderate" }
+      ],
+      "foodRules": {
+        "kidney-disease": { "limit": ["high-sodium"], "prefer": ["low-sodium"] }
+      }
+    }
+  }
+}

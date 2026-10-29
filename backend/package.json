@@ -1,0 +1,37 @@
+{
+  "name": "foodiebite-backend",
+  "version": "1.0.0",
+  "description": "FoodieBite REST API - Phase 2",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "seed": "node src/config/seed.js",
+    "test": "node src/services/__tests__/phase1SafetyRegression.test.js && node src/services/__tests__/phase2Integration.test.js && node src/services/__tests__/phase3MedicalIntegration.test.js && node src/services/__tests__/phase4ContextIntegration.test.js && node src/services/__tests__/phase5BehaviorIntegration.test.js && node src/services/__tests__/confidenceScoring.test.js && node src/services/__tests__/recommendationRegression.test.js && node src/services/__tests__/aiEvaluationDataset.test.js && node src/services/__tests__/brevoIntegration.test.js && node src/services/__tests__/adminSecurityAndManagement.test.js && node src/services/__tests__/unitConversionService.test.js",
+    "benchmark": "node src/services/__tests__/stressTest.test.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "bcryptjs": "^2.4.3",
+    "cloudinary": "^2.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "firebase-admin": "^12.0.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^2.7.0",
+    "nodemailer": "^6.9.7",
+    "resend": "^6.32.1",
+    "pdf-parse": "^2.4.5",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

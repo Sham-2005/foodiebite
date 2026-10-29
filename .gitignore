@@ -1,11 +1,52 @@
+# Dependencies
 node_modules/
-build/
-.cache/
-.env
-.env.local
+**/node_modules/
 
+# Environment and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local IDE metadata
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Firebase deployment cache
+.firebase/
+*-debug.log
+firestore-debug.log
+firebase-debug.log
+
+# Build outputs
+build/
+dist/
+**/build/
+**/dist/
+frontend/build/
+frontend/android/app/build/
+frontend/android/.gradle/
+*.apk
+*.aab
+
+# Local Git metadata backups
+.git-backup/
+frontend/.git-backup/
+*.backup
+
+# Private runtime data & local databases
+backend/data/
+uploads/*
+!uploads/.gitkeep
+
+# Temporary and scratch files
+scratch/
+.tempmediaStorage/
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
-.DS_Store

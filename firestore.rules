@@ -1,0 +1,121 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper: check if requester is the single authorized admin ──
+    function isAdmin() {
+      return request.auth != null &&
+        request.auth.token.email != null &&
+        request.auth.token.email.lower() == 'sham111205s@gmail.com';
+    }
+
+    // ── Helper: authenticated owner of this user path ──────────────
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // ── /users/{userId} — master profile document ──────────────────
+    // medicalReports, favoriteFoods, searchHistory etc. are stored as
+    // FIELDS on this document, so this single rule covers them all.
+    match /users/{userId} {
+      allow read, write: if isOwner(userId) || isAdmin();
+
+      // Settings subcollection
+      match /settings/preferences {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+
+      // Login History subcollection
+      match /loginHistory/{id} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+
+      // Activity Logs subcollection
+      match /activityLogs/{id} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+
+      // AI Coach — Threads and Messages subcollections
+      // Path: users/{uid}/threads/{threadId}/messages/{msgId}
+      match /threads/{threadId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+        match /messages/{msgId} {
+          allow read, write: if isOwner(userId) || isAdmin();
+        }
+      }
+
+      // Deficiency Detection (Cloud Functions write, owner reads only)
+      match /deficiencies/{defId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false; // backend-only writes
+      }
+
+      // Meal Logs
+      match /mealLogs/{logId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+
+      // Streaks & Gamification
+      match /gamification/{docId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+
+      // Email Suggestion History
+      // Path: users/{uid}/emailHistory/{historyId}
+      // Used by apiGetEmailHistory() and the email Cloud Function
+      match /emailHistory/{histId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
+      }
+
+      // Medical Reports subcollection
+      // Medical reports contain sensitive personal health information and are strictly private to the user.
+      match /medicalReports/{reportId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Catch-all for any future subcollections under users/{userId}
+      // that haven't been explicitly declared yet — grants owner access
+      // so new features don't silently break.
+      match /{subcollection}/{docId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    // ── /medicalReports/{reportId} — Top-level medical reports collection ──
+    // Strictly accessible only to the authenticated owner.
+    match /medicalReports/{reportId} {
+      allow read, update, delete: if request.auth != null && (resource.data.userId == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+
+    // ── /feedback — user-submitted feedback ────────────────────────
+    match /feedback/{feedbackId} {
+      allow create: if request.auth != null;          // any logged-in user can submit
+      allow read, update, delete: if isAdmin();       // only admin manages feedback
+    }
+
+    // ── /ai_logs — AI interaction logs (backend writes only) ───────
+    match /ai_logs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // ── /cachedFoods — shared food cache (any auth user) ───────────
+    match /cachedFoods/{foodId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // ── /apiHealth — system health (backend writes only) ───────────
+    match /apiHealth/{healthId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // ── Catch-all — deny everything not explicitly allowed ─────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

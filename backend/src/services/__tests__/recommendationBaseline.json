@@ -1,0 +1,445 @@
+{
+  "Profile 1 - Standard Vegetarian": {
+    "profile": {
+      "name": "Profile 1 - Standard Vegetarian",
+      "user": {
+        "preferences": {
+          "dietType": "Vegetarian",
+          "healthGoals": [
+            "healthy_eating"
+          ],
+          "allergies": []
+        }
+      },
+      "healthProfile": null
+    },
+    "topCount": 30,
+    "foodIds": [
+      "fb_tofu_quinoa",
+      "fb_soy_chunks_fry",
+      "fb_greek_yogurt_honey",
+      "fb_roasted_paneer_salad",
+      "fb_roasted_paneer_cubes",
+      "fb_oats_almond_milk",
+      "fb_moong_sprouts",
+      "fb_dal_tadka",
+      "fb_chia_pudding",
+      "fb_hummus_carrots",
+      "fb_roasted_chana",
+      "fb_palak_tofu",
+      "fb_mix_vegetable_soup",
+      "fb_almonds_walnuts",
+      "fb_brown_rice_khichdi",
+      "fb_roasted_makhana",
+      "fb_brocolli_stir_fry",
+      "fb_avocado_toast_vegan",
+      "fb_green_salad_lemon",
+      "fb_rajma_beans",
+      "fb_cucumber_mint_cooler",
+      "fb_black_coffee",
+      "fb_baigan_bharta",
+      "fb_barley_water",
+      "fb_pumpkin_soup",
+      "fb_coconut_water_fresh",
+      "fb_sauteed_mushroom",
+      "fb_masala_oats",
+      "fb_buttermilk_salt",
+      "fb_poha_kanda"
+    ],
+    "foodNames": [
+      "Tofu Quinoa Veggie Bowl",
+      "Dry Spicy Soya Chunks",
+      "Greek Yogurt with Raw Honey",
+      "Warm Paneer Salad with Mint Chutney",
+      "Roasted Oregano Paneer Cubes",
+      "Oats with Almond Milk & Berries",
+      "Sprouted Moong Salad",
+      "Yellow Dal Tadka",
+      "Chia Seed Coconut Pudding",
+      "Hummus with Baby Carrots",
+      "Roasted Chickpeas (Bhuna Chana)",
+      "Spinach Tofu Curry (Palak Tofu)",
+      "Mixed Vegetable Clear Soup",
+      "Raw Almond & Walnut Mix",
+      "Brown Rice & Lentil Khichdi",
+      "Roasted Spicy Makhana (Foxnuts)",
+      "Garlic Sesame Broccoli Stir-Fry",
+      "Avocado Slices on Whole Wheat Toast",
+      "Mixed Green Salad with Lemon Zest",
+      "Boiled Rajma Salad (Kidney Beans)",
+      "Cucumber Mint Cooler (Hydrating)",
+      "Pure Roasted Black Coffee",
+      "Baigan Bharta (Roasted Eggplant Curry)",
+      "Boiled Barley Lemon Drink",
+      "Roasted Pumpkin Ginger Soup",
+      "Fresh Tender Coconut Water",
+      "Herb Sauteed Mushrooms",
+      "Spiced Masala Oats porridge",
+      "Salted Masala Buttermilk (Chaas)",
+      "Kanda Poha with Peas & Peanuts"
+    ]
+  },
+  "Profile 2 - Vegan with Nut Allergy": {
+    "profile": {
+      "name": "Profile 2 - Vegan with Nut Allergy",
+      "user": {
+        "preferences": {
+          "dietType": "Vegan",
+          "healthGoals": [
+            "weight_loss"
+          ],
+          "allergies": [
+            "nuts"
+          ]
+        }
+      },
+      "healthProfile": null
+    },
+    "topCount": 30,
+    "foodIds": [
+      "fb_soy_chunks_fry",
+      "fb_moong_sprouts",
+      "fb_dal_tadka",
+      "fb_chia_pudding",
+      "fb_roasted_chana",
+      "fb_brown_rice_khichdi",
+      "fb_avocado_toast_vegan",
+      "fb_rajma_beans",
+      "fb_masala_oats",
+      "fb_veg_jalfrezi",
+      "fb_spinach_dal",
+      "fb_oat_bran_porridge",
+      "fb_barley_soup_veggie",
+      "fb_boiled_chana_salad",
+      "fb_aloo_gobi",
+      "fb_sambar_lentil",
+      "fb_avial_kerala",
+      "fb_sprout_chaat_breakfast",
+      "fb_tofu_quinoa",
+      "fb_steamed_idli",
+      "fb_chana_masala",
+      "fb_idli_sambar",
+      "fb_mix_veg_curry",
+      "fb_soya_biryani",
+      "fb_rajma_chawal",
+      "fb_hummus_carrots",
+      "fb_palak_tofu",
+      "fb_mix_vegetable_soup",
+      "fb_roasted_makhana",
+      "fb_brocolli_stir_fry"
+    ],
+    "foodNames": [
+      "Dry Spicy Soya Chunks",
+      "Sprouted Moong Salad",
+      "Yellow Dal Tadka",
+      "Chia Seed Coconut Pudding",
+      "Roasted Chickpeas (Bhuna Chana)",
+      "Brown Rice & Lentil Khichdi",
+      "Avocado Slices on Whole Wheat Toast",
+      "Boiled Rajma Salad (Kidney Beans)",
+      "Spiced Masala Oats porridge",
+      "Vegetable Jalfrezi Stir-Fry",
+      "Dal Palak (Lentils with Spinach)",
+      "Unsweetened Oat Bran Porridge",
+      "Barley Vegetable Broth",
+      "Spiced Boiled Kala Chana Salad",
+      "Aloo Gobi (Potato & Cauliflower Sabzi)",
+      "Lentil Sambar with Drumstick",
+      "Kerala Avial (Mixed Vegetable Coconut Curry)",
+      "Mixed Sprout Chaat (Breakfast Protein Bowl)",
+      "Tofu Quinoa Veggie Bowl",
+      "Steamed Ragi Idli (2 Pcs) with Sambhar",
+      "Chana Masala (Chickpea Stew)",
+      "Steamed Idli (3 Pcs) with Lentil Sambar",
+      "Mixed Vegetable Masala Curry",
+      "High Protein Soy Chunk Biryani",
+      "Rajma Chawal (Kidney Bean Curry with Rice)",
+      "Hummus with Baby Carrots",
+      "Spinach Tofu Curry (Palak Tofu)",
+      "Mixed Vegetable Clear Soup",
+      "Roasted Spicy Makhana (Foxnuts)",
+      "Garlic Sesame Broccoli Stir-Fry"
+    ]
+  },
+  "Profile 3 - Diabetic (Confirmed Refined Sugar Restriction)": {
+    "profile": {
+      "name": "Profile 3 - Diabetic (Confirmed Refined Sugar Restriction)",
+      "user": {
+        "preferences": {
+          "dietType": "Vegetarian",
+          "healthGoals": [
+            "diabetic_friendly"
+          ],
+          "allergies": []
+        }
+      },
+      "healthProfile": {
+        "foodProfile": {
+          "foodsToLimit": [
+            "refined-sugar",
+            "high-glycemic"
+          ],
+          "foodsToPrefer": [
+            "high-fiber",
+            "low-gi"
+          ],
+          "unverifiedFoodRestrictions": []
+        }
+      }
+    },
+    "topCount": 30,
+    "foodIds": [
+      "fb_tofu_quinoa",
+      "fb_roasted_paneer_cubes",
+      "fb_oats_almond_milk",
+      "fb_moong_sprouts",
+      "fb_roasted_chana",
+      "fb_palak_tofu",
+      "fb_mix_vegetable_soup",
+      "fb_almonds_walnuts",
+      "fb_brocolli_stir_fry",
+      "fb_green_salad_lemon",
+      "fb_black_coffee",
+      "fb_masala_oats",
+      "fb_methi_thepla",
+      "fb_tandoori_roti_wheat",
+      "fb_spinach_dal",
+      "fb_oat_bran_porridge",
+      "fb_pumpkin_seeds_roasted",
+      "fb_barley_soup_veggie",
+      "fb_ragi_malt_sugarfree",
+      "fb_bittergourd_subzi",
+      "fb_green_tea_lemon_honey",
+      "fb_walnut_half_raw",
+      "fb_boiled_chana_salad",
+      "fb_ginger_herbal_tea",
+      "fb_rasam_tomato",
+      "fb_sambar_lentil",
+      "fb_pesarattu_andhra",
+      "fb_moong_dal_chilla",
+      "fb_sprout_chaat_breakfast",
+      "fb_lassi_salt"
+    ],
+    "foodNames": [
+      "Tofu Quinoa Veggie Bowl",
+      "Roasted Oregano Paneer Cubes",
+      "Oats with Almond Milk & Berries",
+      "Sprouted Moong Salad",
+      "Roasted Chickpeas (Bhuna Chana)",
+      "Spinach Tofu Curry (Palak Tofu)",
+      "Mixed Vegetable Clear Soup",
+      "Raw Almond & Walnut Mix",
+      "Garlic Sesame Broccoli Stir-Fry",
+      "Mixed Green Salad with Lemon Zest",
+      "Pure Roasted Black Coffee",
+      "Spiced Masala Oats porridge",
+      "Methi Thepla (Fenugreek Flatbread, 2 Pcs)",
+      "Tandoori Roti (Whole Wheat, 1 pc)",
+      "Dal Palak (Lentils with Spinach)",
+      "Unsweetened Oat Bran Porridge",
+      "Dry Roasted Pumpkin Seeds",
+      "Barley Vegetable Broth",
+      "Salted Ragi Malt (Finger Millet Porridge)",
+      "Bitter Gourd Stir-Fry (Karela Subzi)",
+      "Lemon Mint Green Tea (Unsweetened)",
+      "Raw Walnut Halves (6-8 halves)",
+      "Spiced Boiled Kala Chana Salad",
+      "Warming Ginger Cardamom Tea (Sugar-free)",
+      "South Indian Tomato Rasam",
+      "Lentil Sambar with Drumstick",
+      "Pesarattu (Green Moong Dosa, 2 Pcs)",
+      "Moong Dal Cheela (Lentil Pancake, 2 Pcs)",
+      "Mixed Sprout Chaat (Breakfast Protein Bowl)",
+      "Salted Jeera Lassi (Savoury Yogurt Drink)"
+    ]
+  },
+  "Profile 4 - Non-Vegetarian with High Cholesterol": {
+    "profile": {
+      "name": "Profile 4 - Non-Vegetarian with High Cholesterol",
+      "user": {
+        "preferences": {
+          "dietType": "Non-Vegetarian",
+          "healthGoals": [
+            "healthy_eating"
+          ],
+          "allergies": []
+        }
+      },
+      "healthProfile": {
+        "foodProfile": {
+          "foodsToLimit": [
+            "high-saturated-fat",
+            "trans-fat"
+          ],
+          "foodsToPrefer": [
+            "high-fiber",
+            "omega-3-rich"
+          ],
+          "unverifiedFoodRestrictions": []
+        }
+      }
+    },
+    "topCount": 30,
+    "foodIds": [
+      "fb_tofu_quinoa",
+      "fb_soy_chunks_fry",
+      "fb_salmon_baked",
+      "fb_sardines_grilled",
+      "fb_baked_cod_fish",
+      "fb_tuna_avocado_salad",
+      "fb_grilled_cod_fish_lemon",
+      "fb_roasted_paneer_cubes",
+      "fb_oats_almond_milk",
+      "fb_moong_sprouts",
+      "fb_dal_tadka",
+      "fb_chia_pudding",
+      "fb_roasted_chana",
+      "fb_greek_yogurt_honey",
+      "fb_roasted_paneer_salad",
+      "fb_boiled_eggs_2",
+      "fb_scrambled_eggs_toast",
+      "fb_egg_whites_scramble",
+      "fb_spinach_egg_muffins",
+      "fb_egg_salad_light",
+      "fb_masala_omelette",
+      "fb_chicken_breast_grilled",
+      "fb_tuna_salad_light",
+      "fb_chicken_soup_ginger",
+      "fb_turkey_breast_roasted",
+      "fb_chicken_rice_steamed",
+      "fb_shrimp_salad_lemon",
+      "fb_chicken_brocolli_keto",
+      "fb_boiled_chicken_strips",
+      "fb_hummus_carrots"
+    ],
+    "foodNames": [
+      "Tofu Quinoa Veggie Bowl",
+      "Dry Spicy Soya Chunks",
+      "Oven Baked Salmon with Asparagus",
+      "Grilled Fresh Sardines with Lemon",
+      "Herbed Baked Cod Fillet",
+      "Tuna Avocado Salad Bowl",
+      "Lemon Herb Grilled Cod Fillet",
+      "Roasted Oregano Paneer Cubes",
+      "Oats with Almond Milk & Berries",
+      "Sprouted Moong Salad",
+      "Yellow Dal Tadka",
+      "Chia Seed Coconut Pudding",
+      "Roasted Chickpeas (Bhuna Chana)",
+      "Greek Yogurt with Raw Honey",
+      "Warm Paneer Salad with Mint Chutney",
+      "Hard Boiled Eggs (2 Eggs)",
+      "Scrambled Eggs (2) on Whole Wheat Toast",
+      "Veggie Egg White Scramble (4 whites)",
+      "Baked Spinach & Egg Muffins (3 pcs)",
+      "Light Egg Salad with Greek Yogurt Dressing",
+      "Masala Omelette with Onion & Capsicum",
+      "Lemon Herb Grilled Chicken Breast",
+      "Flaked Tuna Salad with Cucumber & Dill",
+      "Clear Chicken Soup with Ginger & Garlic",
+      "Roasted Turkey Breast Slices",
+      "Boiled Chicken and Jasmine Rice Bowl",
+      "Lemon Garlic Steamed Shrimp Salad",
+      "Sesame Baked Chicken and Broccoli",
+      "Clean Boiled Shredded Chicken Strips",
+      "Hummus with Baby Carrots"
+    ]
+  },
+  "Profile 5 - Unverified Blood Sugar Restriction": {
+    "profile": {
+      "name": "Profile 5 - Unverified Blood Sugar Restriction",
+      "user": {
+        "preferences": {
+          "dietType": "Vegetarian",
+          "healthGoals": [
+            "healthy_eating"
+          ],
+          "allergies": []
+        }
+      },
+      "healthProfile": {
+        "foodProfile": {
+          "foodsToLimit": [],
+          "foodsToPrefer": [],
+          "unverifiedFoodRestrictions": [
+            {
+              "biomarker": "Fasting Blood Sugar",
+              "value": 110,
+              "unit": "mg/dL",
+              "potentialLimits": [
+                "refined-sugar",
+                "high-glycemic"
+              ],
+              "warning": "Unverified low-confidence reading"
+            }
+          ]
+        }
+      }
+    },
+    "topCount": 30,
+    "foodIds": [
+      "fb_tofu_quinoa",
+      "fb_soy_chunks_fry",
+      "fb_greek_yogurt_honey",
+      "fb_roasted_paneer_salad",
+      "fb_roasted_paneer_cubes",
+      "fb_oats_almond_milk",
+      "fb_moong_sprouts",
+      "fb_dal_tadka",
+      "fb_chia_pudding",
+      "fb_hummus_carrots",
+      "fb_roasted_chana",
+      "fb_palak_tofu",
+      "fb_mix_vegetable_soup",
+      "fb_almonds_walnuts",
+      "fb_brown_rice_khichdi",
+      "fb_roasted_makhana",
+      "fb_brocolli_stir_fry",
+      "fb_avocado_toast_vegan",
+      "fb_green_salad_lemon",
+      "fb_rajma_beans",
+      "fb_cucumber_mint_cooler",
+      "fb_black_coffee",
+      "fb_baigan_bharta",
+      "fb_barley_water",
+      "fb_pumpkin_soup",
+      "fb_coconut_water_fresh",
+      "fb_sauteed_mushroom",
+      "fb_masala_oats",
+      "fb_buttermilk_salt",
+      "fb_poha_kanda"
+    ],
+    "foodNames": [
+      "Tofu Quinoa Veggie Bowl",
+      "Dry Spicy Soya Chunks",
+      "Greek Yogurt with Raw Honey",
+      "Warm Paneer Salad with Mint Chutney",
+      "Roasted Oregano Paneer Cubes",
+      "Oats with Almond Milk & Berries",
+      "Sprouted Moong Salad",
+      "Yellow Dal Tadka",
+      "Chia Seed Coconut Pudding",
+      "Hummus with Baby Carrots",
+      "Roasted Chickpeas (Bhuna Chana)",
+      "Spinach Tofu Curry (Palak Tofu)",
+      "Mixed Vegetable Clear Soup",
+      "Raw Almond & Walnut Mix",
+      "Brown Rice & Lentil Khichdi",
+      "Roasted Spicy Makhana (Foxnuts)",
+      "Garlic Sesame Broccoli Stir-Fry",
+      "Avocado Slices on Whole Wheat Toast",
+      "Mixed Green Salad with Lemon Zest",
+      "Boiled Rajma Salad (Kidney Beans)",
+      "Cucumber Mint Cooler (Hydrating)",
+      "Pure Roasted Black Coffee",
+      "Baigan Bharta (Roasted Eggplant Curry)",
+      "Boiled Barley Lemon Drink",
+      "Roasted Pumpkin Ginger Soup",
+      "Fresh Tender Coconut Water",
+      "Herb Sauteed Mushrooms",
+      "Spiced Masala Oats porridge",
+      "Salted Masala Buttermilk (Chaas)",
+      "Kanda Poha with Peas & Peanuts"
+    ]
+  }
+}
