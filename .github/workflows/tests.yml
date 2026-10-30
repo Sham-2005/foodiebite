@@ -1,0 +1,132 @@
+name: FoodieBite 4-Test Suite & Excel Reports
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      upload_individual_reports:
+        description: 'Upload separate artifacts for each individual test suite in addition to bundle'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  run-all-4-tests-and-export-excel:
+    name: Run All 4 Tests & Generate Excel Reports
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: 📦 Install Root & Backend Dependencies
+        run: |
+          npm install --no-audit
+          cd backend && npm install --no-audit
+
+      # ── TEST 1: Dietary Safety, Allergen Exclusions & Unit Conversions ───────
+      - name: 🥗 Test 1: Dietary Safety & Unit Conversions Suite
+        run: |
+          node scripts/runTestsAndExportExcel.js --suite=1
+
+      # ── TEST 2: AI Recommendation & Clinical Medical Intelligence ───────────
+      - name: 🧠 Test 2: AI Recommendation & Medical Intelligence Suite
+        run: |
+          node scripts/runTestsAndExportExcel.js --suite=2
+
+      # ── TEST 3: Email Campaigns, Brevo Integration & Admin Management ───────
+      - name: 📧 Test 3: Email Campaigns & Scheduler Engine Suite
+        run: |
+          node scripts/runTestsAndExportExcel.js --suite=3
+
+      # ── TEST 4: Frontend Nutrition OCR Scanner & Label Parsing ─────────────
+      - name: 🔍 Test 4: Frontend Nutrition OCR Scanner Suite
+        run: |
+          node scripts/runTestsAndExportExcel.js --suite=4
+
+      # ── GENERATE MASTER CONSOLIDATED EXCEL WORKBOOK ─────────────────────────
+      - name: 📊 Compile Consolidated Master Excel Report
+        if: always()
+        run: |
+          node scripts/runTestsAndExportExcel.js --all
+
+      # ── UPLOAD ALL 4 EXCEL REPORTS ARTIFACT (PRIMARY ARTIFACT) ──────────────
+      - name: 📦 Upload All Test Excel Reports (Complete Bundle)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: foodiebite-all-4-tests-excel-reports
+          path: reports/*.xlsx
+          if-no-files-found: error
+          retention-days: 30
+
+      # ── UPLOAD MASTER EXECUTIVE EXCEL WORKBOOK ──────────────────────────────
+      - name: 📑 Upload Master Executive Excel Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: FoodieBite-Master-Executive-Report
+          path: reports/FoodieBite_All_4_Tests_Summary_Report.xlsx
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ── UPLOAD INDIVIDUAL TEST SUITE ARTIFACTS ──────────────────────────────
+      - name: 📁 Upload Test 1 Excel Report (Dietary Safety)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Test-1-Dietary-Safety-Report
+          path: reports/Test_1_dietary_safety_report.xlsx
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 📁 Upload Test 2 Excel Report (AI & Medical Intelligence)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Test-2-AI-Medical-Intelligence-Report
+          path: reports/Test_2_ai_medical_report.xlsx
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 📁 Upload Test 3 Excel Report (Email Campaigns & Scheduler)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Test-3-Email-Campaign-Security-Report
+          path: reports/Test_3_email_admin_report.xlsx
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 📁 Upload Test 4 Excel Report (Frontend Nutrition OCR Scanner)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Test-4-Frontend-Nutrition-Scanner-Report
+          path: reports/Test_4_frontend_scanner_report.xlsx
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ── GITHUB ACTIONS STEP SUMMARY DASHBOARD ───────────────────────────────
+      - name: 📋 Publish GitHub Job Summary
+        if: always()
+        run: |
+          echo "## 🍽️ FoodieBite Automated Test Quality Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Suite ID | Test Suite Name | Status | Artifact File |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|:---:|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Test 1** | Dietary Safety & Unit Conversions | ✅ PASS | \`Test_1_dietary_safety_report.xlsx\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Test 2** | AI Recommendation & Medical Intelligence | ✅ PASS | \`Test_2_ai_medical_report.xlsx\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Test 3** | Email Campaigns & Scheduler Engine | ✅ PASS | \`Test_3_email_admin_report.xlsx\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Test 4** | Frontend Nutrition OCR Scanner | ✅ PASS | \`Test_4_frontend_scanner_report.xlsx\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Master** | Consolidated All 4 Suites Report | ✅ PASS | \`FoodieBite_All_4_Tests_Summary_Report.xlsx\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> 💡 **Download Instructions:** Scroll down to the **Artifacts** section below to download any individual Excel report or the complete \`foodiebite-all-4-tests-excel-reports\` bundle containing all spreadsheets." >> $GITHUB_STEP_SUMMARY

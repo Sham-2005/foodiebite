@@ -5,7 +5,16 @@
   "description": "FoodieBite Monorepo",
   "scripts": {
     "test": "cd backend && npm test",
+    "test:1:safety": "node scripts/runTestsAndExportExcel.js --suite=1",
+    "test:2:ai": "node scripts/runTestsAndExportExcel.js --suite=2",
+    "test:3:email": "node scripts/runTestsAndExportExcel.js --suite=3",
+    "test:4:frontend": "node scripts/runTestsAndExportExcel.js --suite=4",
+    "test:all-4": "node scripts/runTestsAndExportExcel.js --all",
+    "test:report:excel": "node scripts/runTestsAndExportExcel.js --all",
     "test:frontend": "node frontend/src/services/__tests__/nutritionScanner.test.mjs",
     "build": "cd frontend && npm run build"
+  },
+  "devDependencies": {
+    "exceljs": "^4.4.0"
   }
 }

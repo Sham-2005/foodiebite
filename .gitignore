@@ -50,3 +50,7 @@ scratch/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Test execution reports (generated dynamically in CI/CD and uploaded to artifacts)
+reports/*.xlsx
+!reports/.gitkeep
