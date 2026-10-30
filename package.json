@@ -13,6 +13,8 @@
     "test:report:excel": "node scripts/runTestsAndExportExcel.js --all",
     "test:frontend": "node frontend/src/services/__tests__/nutritionScanner.test.mjs",
     "security:scan": "node scripts/generateSecurityReports.js",
+    "test:load": "node scripts/runBaselineLoadTest.js --concurrency=100 --duration=60",
+    "test:load:quick": "node scripts/runBaselineLoadTest.js --concurrency=100 --duration=10",
     "build": "cd frontend && npm run build"
   },
   "devDependencies": {
