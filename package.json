@@ -12,6 +12,7 @@
     "test:all-4": "node scripts/runTestsAndExportExcel.js --all",
     "test:report:excel": "node scripts/runTestsAndExportExcel.js --all",
     "test:frontend": "node frontend/src/services/__tests__/nutritionScanner.test.mjs",
+    "security:scan": "node scripts/generateSecurityReports.js",
     "build": "cd frontend && npm run build"
   },
   "devDependencies": {
