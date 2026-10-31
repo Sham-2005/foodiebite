@@ -17,6 +17,8 @@
     "test:load:quick": "node scripts/runBaselineLoadTest.js --concurrency=100 --duration=10",
     "test:appium": "node appium-tests/scripts/runMockAppiumRunner.js",
     "test:appium:report": "node appium-tests/scripts/generateAppiumExcelReport.js",
+    "test:selenium": "node selenium-tests/tests/login-tests.js",
+    "test:selenium:report": "node selenium-tests/scripts/generateSeleniumExcelReport.js",
     "build": "cd frontend && npm run build"
   },
   "devDependencies": {

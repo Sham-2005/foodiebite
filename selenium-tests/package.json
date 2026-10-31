@@ -1,0 +1,28 @@
+{
+  "name": "foodiebite-selenium-tests",
+  "version": "1.0.0",
+  "description": "Selenium WebDriver E2E Automation Testing Suite for FoodieBite Web Frontend",
+  "main": "tests/login-tests.js",
+  "scripts": {
+    "test": "node tests/login-tests.js",
+    "test:mocha": "mocha tests/login-tests.js --timeout 60000",
+    "test:report": "node scripts/generateSeleniumExcelReport.js"
+  },
+  "keywords": [
+    "selenium",
+    "selenium-webdriver",
+    "e2e-testing",
+    "foodiebite",
+    "react-web",
+    "login-tests",
+    "automation"
+  ],
+  "author": "FoodieBite QA & Automation Engineering Team",
+  "license": "ISC",
+  "devDependencies": {
+    "chromedriver": "^131.0.0",
+    "exceljs": "^4.4.0",
+    "mocha": "^10.4.0",
+    "selenium-webdriver": "^4.27.0"
+  }
+}
