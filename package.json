@@ -15,6 +15,8 @@
     "security:scan": "node scripts/generateSecurityReports.js",
     "test:load": "node scripts/runBaselineLoadTest.js --concurrency=100 --duration=60",
     "test:load:quick": "node scripts/runBaselineLoadTest.js --concurrency=100 --duration=10",
+    "test:appium": "node appium-tests/scripts/runMockAppiumRunner.js",
+    "test:appium:report": "node appium-tests/scripts/generateAppiumExcelReport.js",
     "build": "cd frontend && npm run build"
   },
   "devDependencies": {
