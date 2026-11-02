@@ -454,3 +454,4 @@ const outputPath = path.resolve(__dirname, 'testCasesData.js');
 const fileContent = `'use strict';\n\nmodule.exports = ${JSON.stringify(testCases, null, 2)};\n`;
 fs.writeFileSync(outputPath, fileContent, 'utf8');
 console.log(`✅ Saved Selenium test cases dataset to ${outputPath}`);
+

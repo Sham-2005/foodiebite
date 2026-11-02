@@ -4,6 +4,9 @@
   "private": true,
   "description": "FoodieBite Monorepo",
   "scripts": {
+    "start": "node scripts/startApp.js",
+    "start:backend": "cd backend && npm start",
+    "start:frontend": "cd frontend && npm start",
     "test": "cd backend && npm test",
     "test:1:safety": "node scripts/runTestsAndExportExcel.js --suite=1",
     "test:2:ai": "node scripts/runTestsAndExportExcel.js --suite=2",

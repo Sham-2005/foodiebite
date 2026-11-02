@@ -83,3 +83,4 @@ The test suite compiles an executive-ready Microsoft Excel workbook at:
    - Granular execution matrix with Test ID, Category, Screen, Scenario, Preconditions, Execution Steps, Input Data, Expected Behavior, Actual Result, Status Badge (`PASS`), Severity, Automation Type, and Duration.
 3. **`Environment & Browser Specs`**:
    - Detailed technical specifications for Selenium WebDriver v4.27, Chrome Headless v131, Chromedriver, Node v22, React Native Web 0.19, and test URLs.
+
