@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { Platform } from 'react-native';
+import storage, { getItemSync, setItemSync } from './storage';
 
 const STORAGE_KEYS = {
   ANONYMOUS_USER_ID: 'foodiebite_anon_user_id',
@@ -28,16 +29,14 @@ export function getAnonymousUserId(userId = null) {
     return 'anon_' + String(userId).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
   }
 
-  if (typeof window !== 'undefined' && window.localStorage) {
-    try {
-      let id = localStorage.getItem(STORAGE_KEYS.ANONYMOUS_USER_ID);
-      if (!id) {
-        id = 'anon_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
-        localStorage.setItem(STORAGE_KEYS.ANONYMOUS_USER_ID, id);
-      }
-      return id;
-    } catch (_) {}
-  }
+  try {
+    let id = getItemSync(STORAGE_KEYS.ANONYMOUS_USER_ID);
+    if (!id) {
+      id = 'anon_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+      setItemSync(STORAGE_KEYS.ANONYMOUS_USER_ID, id);
+    }
+    return id;
+  } catch (_) { }
   return 'anon_guest_' + Date.now();
 }
 
@@ -48,19 +47,17 @@ export function getAnalyticsSessionId() {
   const now = Date.now();
   const thirtyMins = 30 * 60 * 1000;
 
-  if (typeof window !== 'undefined' && window.sessionStorage) {
-    try {
-      let sessId = sessionStorage.getItem(STORAGE_KEYS.SESSION_ID);
-      let exp = parseInt(sessionStorage.getItem(STORAGE_KEYS.SESSION_EXPIRES) || '0', 10);
+  try {
+    let sessId = getItemSync(STORAGE_KEYS.SESSION_ID);
+    let exp = parseInt(getItemSync(STORAGE_KEYS.SESSION_EXPIRES) || '0', 10);
 
-      if (!sessId || now > exp) {
-        sessId = 'sess_' + now.toString(36) + '_' + Math.random().toString(36).substring(2, 6);
-        sessionStorage.setItem(STORAGE_KEYS.SESSION_ID, sessId);
-      }
-      sessionStorage.setItem(STORAGE_KEYS.SESSION_EXPIRES, String(now + thirtyMins));
-      return sessId;
-    } catch (_) {}
-  }
+    if (!sessId || now > exp) {
+      sessId = 'sess_' + now.toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+      setItemSync(STORAGE_KEYS.SESSION_ID, sessId);
+    }
+    setItemSync(STORAGE_KEYS.SESSION_EXPIRES, String(now + thirtyMins));
+    return sessId;
+  } catch (_) { }
   return 'sess_default';
 }
 

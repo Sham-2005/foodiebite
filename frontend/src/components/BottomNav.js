@@ -38,8 +38,8 @@ export default function BottomNav() {
               activeOpacity={0.8}
               onPress={() => navigation.navigate(name)}
               style={[styles.item, active && styles.itemActive]}
-              accessibilityRole="button"
-              accessibilityLabel={`Navigate to ${label}`}
+              role="button"
+              aria-label={`Navigate to ${label}`}
             >
               <Icon size={22} color={active ? C.orange : C.muted} strokeWidth={active ? 2.5 : 1.8} />
               <Text style={[styles.label, active && styles.labelActive]}>{label}</Text>

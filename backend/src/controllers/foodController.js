@@ -4,6 +4,19 @@
 // ─────────────────────────────────────────────────────────────
 
 const admin = require('firebase-admin');
+const { getSupabaseClient, getSupabaseAdmin } = require('../config/supabase');
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isValidUUID(str) {
+  return typeof str === 'string' && UUID_REGEX.test(str.trim());
+}
+
+function withTimeout(promise, ms = 800) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve({ __timedOut: true }), ms))
+  ]);
+}
 
 // ── Lazy Firestore getter — never crashes on module load ──────
 function getDb() {
@@ -250,14 +263,52 @@ function rank(products, goals = []) {
   });
 }
 
-// ── Fetch full user document from Firestore (non-blocking) ───────────
+// ── Fetch full user document (Supabase first, userStore fallback, Firestore timed-out) ───────────
 async function getUserDocument(userId) {
+  if (!userId) return null;
+
+  // 1. Supabase PostgreSQL
+  const client = getSupabaseAdmin() || getSupabaseClient();
+  if (client && isValidUUID(userId)) {
+    try {
+      const { data: prof } = await client.from('profiles').select('*').eq('id', userId).maybeSingle();
+      if (prof) {
+        const { data: hp } = await client.from('health_profiles').select('*').eq('user_id', userId).maybeSingle();
+        return {
+          ...prof,
+          preferences: prof.preferences || {},
+          dietType: prof.diet_type || prof.preferences?.dietType,
+          healthProfile: hp ? {
+            overallScore: hp.overall_score,
+            overallLabel: hp.overall_label,
+            categoryScores: hp.category_scores,
+            wellnessConcerns: hp.wellness_concerns,
+            foodProfile: hp.food_profile,
+            findings: hp.findings
+          } : null
+        };
+      }
+    } catch (err) {
+      console.warn('foodController: Supabase user profile fetch notice:', err.message);
+    }
+  }
+
+  // 2. Local userStore fallback
+  try {
+    const userStore = require('../services/userStore');
+    const local = userStore.findById(userId);
+    if (local) return local;
+  } catch (_) {}
+
+  // 3. Timed Firestore query fallback (max 800ms)
   try {
     const db = getDb();
-    if (!db || !userId) return null;
-    const snap = await db.collection('users').doc(userId).get();
-    if (!snap.exists) return null;
-    return snap.data() || null;
+    if (!db) return null;
+    const snap = await withTimeout(db.collection('users').doc(userId).get(), 800);
+    if (snap && !snap.__timedOut && snap.exists) {
+      return snap.data() || null;
+    }
+    return null;
   } catch (err) {
     console.warn('foodController: user document fetch failed (non-fatal):', err.message);
     return null;
@@ -468,35 +519,40 @@ exports.getRecommendations = async (req, res, next) => {
     const db = getDb();
     if (db) {
       try {
-        const cachedSnap = await db.collection('cachedFoods')
-          .where('sourceLookupType', '==', 'recommendation')
-          .get();
-        cachedSnap.forEach(doc => {
-          const d = doc.data();
-          const ageInMs = Date.now() - new Date(d.lastUpdated).getTime();
-          const ageInDays = ageInMs / (1000 * 60 * 60 * 24);
-          const nameLower = (d.foodName || '').toLowerCase();
-          let ttl = 1;
-          if (nameLower.includes('milk') || nameLower.includes('egg') || nameLower.includes('rice') ||
-              nameLower.includes('chicken') || nameLower.includes('paneer') || nameLower.includes('oats')) {
-            ttl = 30;
-          }
-          
-          if (ageInDays <= ttl) {
-            cacheList.push({
-              id: d.foodId,
-              name: d.foodName,
-              calories: d.calories,
-              protein: d.protein,
-              carbs: d.carbs,
-              fat: d.fat,
-              image: d.image,
-              healthScore: d.healthScore,
-              grade: d.nutritionGrade,
-              source: 'cache'
-            });
-          }
-        });
+        const cachedSnap = await withTimeout(
+          db.collection('cachedFoods')
+            .where('sourceLookupType', '==', 'recommendation')
+            .get(),
+          800
+        );
+        if (cachedSnap && !cachedSnap.__timedOut && cachedSnap.forEach) {
+          cachedSnap.forEach(doc => {
+            const d = doc.data();
+            const ageInMs = Date.now() - new Date(d.lastUpdated).getTime();
+            const ageInDays = ageInMs / (1000 * 60 * 60 * 24);
+            const nameLower = (d.foodName || '').toLowerCase();
+            let ttl = 1;
+            if (nameLower.includes('milk') || nameLower.includes('egg') || nameLower.includes('rice') ||
+                nameLower.includes('chicken') || nameLower.includes('paneer') || nameLower.includes('oats')) {
+              ttl = 30;
+            }
+            
+            if (ageInDays <= ttl) {
+              cacheList.push({
+                id: d.foodId,
+                name: d.foodName,
+                calories: d.calories,
+                protein: d.protein,
+                carbs: d.carbs,
+                fat: d.fat,
+                image: d.image,
+                healthScore: d.healthScore,
+                grade: d.nutritionGrade,
+                source: 'cache'
+              });
+            }
+          });
+        }
       } catch (cacheErr) {
         console.warn('⚠️ foodController: cachedFoods read failed (safe):', cacheErr.message);
       }
@@ -721,36 +777,41 @@ exports.searchFoods = async (req, res, next) => {
     const db2 = getDb();
     if (db2) {
       try {
-        const cachedSnap = await db2.collection('cachedFoods')
-          .where('sourceLookupType', '==', 'search')
-          .get();
-        cachedSnap.forEach(doc => {
-      const d = doc.data();
-      const ageInMs = Date.now() - new Date(d.lastUpdated).getTime();
-      const ageInDays = ageInMs / (1000 * 60 * 60 * 24);
-      const nameLower = d.foodName.toLowerCase();
-      
-      let ttl = 7; // Search Result TTL = 7 Days
-      if (nameLower.includes('milk') || nameLower.includes('egg') || nameLower.includes('rice') ||
-          nameLower.includes('chicken') || nameLower.includes('paneer') || nameLower.includes('oats')) {
-        ttl = 30; // Frequent override
-      }
+        const cachedSnap = await withTimeout(
+          db2.collection('cachedFoods')
+            .where('sourceLookupType', '==', 'search')
+            .get(),
+          800
+        );
+        if (cachedSnap && !cachedSnap.__timedOut && cachedSnap.forEach) {
+          cachedSnap.forEach(doc => {
+            const d = doc.data();
+            const ageInMs = Date.now() - new Date(d.lastUpdated).getTime();
+            const ageInDays = ageInMs / (1000 * 60 * 60 * 24);
+            const nameLower = d.foodName.toLowerCase();
+            
+            let ttl = 7; // Search Result TTL = 7 Days
+            if (nameLower.includes('milk') || nameLower.includes('egg') || nameLower.includes('rice') ||
+                nameLower.includes('chicken') || nameLower.includes('paneer') || nameLower.includes('oats')) {
+              ttl = 30; // Frequent override
+            }
 
-      if (ageInDays <= ttl && nameLower.includes(queryText.toLowerCase())) {
-        cacheList.push({
-          id: d.foodId,
-          name: d.foodName,
-          calories: d.calories,
-          protein: d.protein,
-          carbs: d.carbs,
-          fat: d.fat,
-          image: d.image,
-          healthScore: d.healthScore,
-          grade: d.nutritionGrade,
-          source: 'cache'
-        });
-      }
-        });
+            if (ageInDays <= ttl && nameLower.includes(queryText.toLowerCase())) {
+              cacheList.push({
+                id: d.foodId,
+                name: d.foodName,
+                calories: d.calories,
+                protein: d.protein,
+                carbs: d.carbs,
+                fat: d.fat,
+                image: d.image,
+                healthScore: d.healthScore,
+                grade: d.nutritionGrade,
+                source: 'cache'
+              });
+            }
+          });
+        }
       } catch (cacheErr) {
         console.warn('⚠️ foodController: search cachedFoods read failed (safe):', cacheErr.message);
       }

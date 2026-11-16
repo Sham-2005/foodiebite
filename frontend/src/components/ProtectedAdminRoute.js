@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { ShieldAlert, Home } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { getAdminSession } from '../services/api';
+import { setItemSync } from '../services/storage.js';
 
 const LazyAdminDashboardScreen = React.lazy(() => import('../screens/AdminDashboardScreen'));
 
@@ -29,9 +30,7 @@ export default function ProtectedAdminRoute(props) {
   // Scenario C: Unauthenticated visitor -> Redirect to SignIn
   useEffect(() => {
     if (!authLoading && !effectiveUser) {
-      if (typeof window !== 'undefined' && window.sessionStorage) {
-        window.sessionStorage.setItem('foodiebite_redirect_after_login', 'admin');
-      }
+      setItemSync('foodiebite_redirect_after_login', 'admin');
       navigation.navigate('SignIn');
     }
   }, [authLoading, effectiveUser, navigation]);
@@ -75,8 +74,8 @@ export default function ProtectedAdminRoute(props) {
             style={styles.homeButton}
             onPress={() => navigation.navigate('Home')}
             activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel="Return to FoodieBite home page"
+            role="button"
+            aria-label="Return to FoodieBite home page"
           >
             <Home size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
             <Text style={styles.homeButtonText}>Return to Home</Text>

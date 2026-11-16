@@ -218,7 +218,7 @@ export default function ProfileScreen() {
           </View>
           
           <Text style={styles.userName}>{user?.name || 'FoodieBite User'}</Text>
-          <Text style={styles.userEmail}>{user?.email || 'user@example.com'}</Text>
+          <Text style={styles.userEmail}>{user?.email || ''}</Text>
         </View>
 
         {/* Universal Toasts */}

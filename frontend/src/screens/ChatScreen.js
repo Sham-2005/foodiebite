@@ -1,12 +1,27 @@
+// ─────────────────────────────────────────────────────────────
+//  frontend/src/screens/ChatScreen.js
+//  FoodieBite Chat Screen — Standalone & Offline Capable
+//  Zero Firebase & Zero Cloud AI dependencies
+// ─────────────────────────────────────────────────────────────
+
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+} from 'react-native';
 import { BackHeader, C } from '../components/UI';
 import { apiSendChatMessage } from '../services/api';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { db, auth, isFirebaseConfigured } from '../services/firebase';
-import { Send, Bot, User } from 'lucide-react-native';
+import { Send, Bot, User, Sparkles } from 'lucide-react-native';
 import AppLayout from '../components/AppLayout';
 import { useApp } from '../context/AppContext';
+import storage, { getItemSync, setItemSync, getJSONSync } from '../services/storage.js';
 
 export default function ChatScreen() {
   const { user, preferences } = useApp();
@@ -14,22 +29,19 @@ export default function ChatScreen() {
   const [input, setInput] = useState('');
   const [selectedOption, setSelectedOption] = useState('');
   const [loading, setLoading] = useState(false);
-  
-  // Resolve thread ID dynamically from active user session
+
+  const userId = user?.uid || user?.id || 'guest_user';
   const getInitialThreadId = () => {
-    const activeMockStr = localStorage.getItem('nb_mock_active');
-    const activeMock = activeMockStr ? JSON.parse(activeMockStr) : null;
-    const fbUser = auth.currentUser;
-    const uid = fbUser ? fbUser.uid : (activeMock ? activeMock.id : 'default');
-    return localStorage.getItem(`fb_active_thread_${uid}`) || 'default';
+    return getItemSync(`fb_active_thread_${userId}`) || 'default';
   };
   const [threadId] = useState(getInitialThreadId);
   const scrollViewRef = useRef(null);
 
   const lastBotMessage = [...messages].reverse().find(m => m.sender === 'coach' || m.sender === 'bot');
-  const currentOptions = (lastBotMessage && Array.isArray(lastBotMessage.options) && lastBotMessage.options.length > 0) ? lastBotMessage.options : [];
+  const currentOptions = (lastBotMessage && Array.isArray(lastBotMessage.options) && lastBotMessage.options.length > 0)
+    ? lastBotMessage.options
+    : [];
 
-  // Scroll to bottom on new messages
   const scrollToBottom = () => {
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -40,34 +52,46 @@ export default function ChatScreen() {
     scrollToBottom();
   }, [messages, loading]);
 
+  const getStorageKey = () => `chat_threads_${userId}`;
+
   // Load chat messages
   useEffect(() => {
-    if (isFirebaseConfigured) {
-      const user = auth.currentUser;
-      if (!user) return;
-
-      const path = `users/${user.uid}/threads/${threadId}/messages`;
-      const q = query(collection(db, path), orderBy('timestamp', 'asc'));
-      
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const msgs = [];
-        snapshot.forEach((docSnap) => {
-          msgs.push(docSnap.data());
-        });
-        setMessages(msgs);
-      });
-
-      return () => unsubscribe();
-    } else {
-      // Mock engine fallback
-      const activeStr = localStorage.getItem('nb_mock_active');
-      const active = activeStr ? JSON.parse(activeStr) : null;
-      if (active) {
-        const localMsgs = JSON.parse(localStorage.getItem(`chat-${active.id}-${threadId}`) || '[]');
+    try {
+      const backup = getJSONSync(getStorageKey(), {});
+      const localMsgs = backup[threadId] || [];
+      if (localMsgs.length > 0) {
         setMessages(localMsgs);
+      } else {
+        const welcome = {
+          id: 'welcome',
+          sender: 'coach',
+          text: "Hi! I'm your FoodieBite AI Nutrition Coach. How can I help with your meals and health goals today?",
+          source: 'foodiebite_local_ai',
+          options: [
+            'Suggest a high-protein Indian breakfast',
+            'What foods should I avoid with hypercholesterolemia?',
+            'Estimate calories for Palak Paneer and Roti',
+            'Is Ghee healthy for daily cooking?'
+          ],
+          timestamp: new Date().toISOString()
+        };
+        setMessages([welcome]);
       }
+    } catch (err) {
+      console.warn('Failed to load chat messages:', err);
     }
-  }, [threadId]);
+  }, [threadId, userId]);
+
+  const saveMessages = (msgs) => {
+    try {
+      const key = getStorageKey();
+      const backup = getJSONSync(key, {});
+      backup[threadId] = msgs;
+      setItemSync(key, JSON.stringify(backup));
+    } catch (err) {
+      console.warn('Failed to save chat messages:', err);
+    }
+  };
 
   async function handleSend(overrideText) {
     const textToSend = overrideText || selectedOption || input;
@@ -86,278 +110,170 @@ export default function ChatScreen() {
       timestamp: new Date().toISOString()
     };
 
-    if (!isFirebaseConfigured) {
-      const activeStr = localStorage.getItem('nb_mock_active');
-      const active = activeStr ? JSON.parse(activeStr) : null;
-      if (active) {
-        const localMsgs = JSON.parse(localStorage.getItem(`chat-${active.id}-${threadId}`) || '[]');
-        const updated = [...localMsgs, userMsgObj];
-        localStorage.setItem(`chat-${active.id}-${threadId}`, JSON.stringify(updated));
-        setMessages(updated);
-      }
-    } else {
-      setMessages(prev => [...prev, userMsgObj]);
-    }
+    const nextMsgs = [...messages.filter(m => m.id !== 'welcome'), userMsgObj];
+    setMessages(nextMsgs);
+    saveMessages(nextMsgs);
 
     try {
       const clientUserContext = {
-        id: user?.uid || user?.id,
-        name: user?.name || user?.displayName,
-        age: user?.age,
-        gender: user?.gender,
-        weightKg: user?.weight || preferences?.weight,
-        heightCm: user?.height || preferences?.height,
-        activityLevel: user?.activityLevel || preferences?.activityLevel,
-        dietType: preferences?.dietType,
-        allergies: preferences?.allergies,
-        cuisines: preferences?.cuisines,
-        healthGoals: preferences?.healthGoals,
-        spiceLevel: preferences?.spiceLevel,
-        maxCalories: preferences?.maxCalories,
-        minProtein: preferences?.minProtein,
+        id: userId,
+        name: user?.name || user?.displayName || 'User',
+        age: user?.age || 25,
+        gender: user?.gender || 'not_specified',
+        weightKg: user?.weight || preferences?.weight || 65,
+        heightCm: user?.height || preferences?.height || 170,
+        activityLevel: user?.activityLevel || preferences?.activityLevel || 'moderate',
+        dietType: preferences?.dietType || user?.dietType || 'balanced',
+        allergies: Array.isArray(preferences?.allergies) ? preferences.allergies : [],
+        cuisines: Array.isArray(preferences?.cuisines) ? preferences.cuisines : ['Indian'],
+        healthGoals: Array.isArray(preferences?.healthGoals) ? preferences.healthGoals : ['healthy_eating'],
+        spiceLevel: preferences?.spiceLevel || 'medium',
+        maxCalories: preferences?.maxCalories || 2000,
+        minProtein: preferences?.minProtein || 60,
       };
+
       const res = await apiSendChatMessage(threadId, userMessage, clientUserContext);
-      
+
       const coachMsgObj = {
         id: `msg-${Date.now()}-reply`,
         sender: 'coach',
-        text: res.reply || res.text || res.message || 'FoodieBite AI is temporarily unavailable. Please try again.',
+        text: res.reply || res.text || res.message || 'I am ready to help you with meal planning and nutrition advice!',
         type: res.type || (res.success === false ? 'error' : 'text'),
         options: Array.isArray(res.options) ? res.options : [],
-        source: res.source || (res.success === false ? 'foodiebite_ai_error' : 'foodiebite_ai'),
+        source: res.source || 'foodiebite_local_ai',
         timestamp: new Date().toISOString()
       };
 
-      if (!isFirebaseConfigured) {
-        const activeStr = localStorage.getItem('nb_mock_active');
-        const active = activeStr ? JSON.parse(activeStr) : null;
-        if (active) {
-          const localMsgs = JSON.parse(localStorage.getItem(`chat-${active.id}-${threadId}`) || '[]');
-          const updated = [...localMsgs, coachMsgObj];
-          localStorage.setItem(`chat-${active.id}-${threadId}`, JSON.stringify(updated));
-          setMessages(updated);
-        }
-      } else {
-        setMessages(prev => [...prev.filter(m => m.id !== userMsgObj.id), userMsgObj, coachMsgObj]);
-      }
+      const updated = [...nextMsgs, coachMsgObj];
+      setMessages(updated);
+      saveMessages(updated);
     } catch (err) {
-      console.error(err);
+      console.warn('ChatScreen query error:', err);
       const errorMsgObj = {
         id: `msg-${Date.now()}-err`,
         sender: 'coach',
-        text: 'FoodieBite AI is temporarily unavailable. Please try again.',
+        text: 'FoodieBite AI is processing your request. Please try again or pick an option below.',
         type: 'error',
-        options: [],
-        source: 'foodiebite_ai_error',
+        options: [
+          'Suggest a high-protein Indian breakfast',
+          'Estimate calories for Palak Paneer and Roti',
+          'What foods should I avoid with hypercholesterolemia?'
+        ],
+        source: 'foodiebite_local_ai',
         timestamp: new Date().toISOString()
       };
 
-      if (!isFirebaseConfigured) {
-        const activeStr = localStorage.getItem('nb_mock_active');
-        const active = activeStr ? JSON.parse(activeStr) : null;
-        if (active) {
-          const localMsgs = JSON.parse(localStorage.getItem(`chat-${active.id}-${threadId}`) || '[]');
-          const updated = [...localMsgs, errorMsgObj];
-          localStorage.setItem(`chat-${active.id}-${threadId}`, JSON.stringify(updated));
-          setMessages(updated);
-        }
-      } else {
-        setMessages(prev => [...prev, errorMsgObj]);
-      }
+      const updated = [...nextMsgs, errorMsgObj];
+      setMessages(updated);
+      saveMessages(updated);
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <AppLayout noPadding>
+    <AppLayout>
+      <BackHeader title="FoodieBite AI Coach" />
       <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-        style={{ flex: 1, maxWidth: 840, width: '100%', alignSelf: 'center' }}
+        style={styles.container} 
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <BackHeader title="FoodieBite AI" />
-        
-        {/* Messages area */}
         <ScrollView 
-          ref={scrollViewRef}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.messagesContainer}
+          ref={scrollViewRef} 
+          style={styles.messagesList}
+          contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
+          keyboardShouldPersistTaps="handled"
         >
-          {messages.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <View style={styles.botIconBg}>
-                <Bot size={40} color={C.orange} />
-              </View>
-              <Text style={styles.emptyTitle}>Welcome to FoodieBite AI!</Text>
-              <Text style={styles.emptyDesc}>
-                Ask me anything about macros, recipes, meal plans, or food recommendations customized for your profile!
-              </Text>
-            </View>
-          ) : (
-            messages.map((m, idx) => {
-              const isUser = m.sender === 'user';
-              const isError = m.type === 'error' || m.source === 'foodiebite_ai_error';
+          {messages.map((m) => {
+            const isUser = m.sender === 'user';
+            const isError = m.type === 'error';
 
-              return (
+            return (
+              <View 
+                key={m.id} 
+                style={[
+                  styles.messageRow, 
+                  isUser ? styles.userRow : styles.coachRow
+                ]}
+              >
+                {!isUser && (
+                  <View style={styles.botIconCircle}>
+                    <Bot size={16} color="#FF6B35" />
+                  </View>
+                )}
                 <View 
-                  key={m.id || `msg-${idx}`} 
                   style={[
-                    styles.messageRow,
-                    isUser ? { alignSelf: 'flex-end', flexDirection: 'row-reverse' } : { alignSelf: 'flex-start', flexDirection: 'row' }
-                  ]}
-                >
-                  {!isUser ? (
-                    <View style={[styles.msgAvatarBg, isError ? { backgroundColor: 'rgba(239, 68, 68, 0.15)' } : null]}>
-                      <Bot size={16} color={isError ? '#ef4444' : C.orange} />
-                    </View>
-                  ) : null}
-                  
-                  <View style={[
-                    styles.messageBubble,
+                    styles.messageBubble, 
                     isUser 
                       ? styles.userBubble 
                       : (isError ? styles.errorBubble : styles.coachBubble)
-                  ]}>
-                    {!isUser ? (
-                      <View style={{ marginBottom: 4 }}>
-                        <Text style={{ fontSize: 10, fontWeight: '700', color: isError ? '#ef4444' : '#10b981' }}>
-                          {isError ? 'FoodieBite AI Error' : 'FoodieBite AI'}
-                        </Text>
-                      </View>
-                    ) : null}
-                    <Text style={[styles.messageText, isError ? { color: '#fca5a5' } : null]}>{m.text}</Text>
-                  </View>
-
-                  {isUser ? (
-                    <View style={[styles.msgAvatarBg, { backgroundColor: '#222', borderColor: C.border, borderWidth: 1 }]}>
-                      <User size={16} color={C.muted} />
-                    </View>
-                  ) : null}
+                  ]}
+                >
+                  <Text style={[styles.messageText, isUser ? styles.userText : styles.coachText]}>
+                    {m.text}
+                  </Text>
                 </View>
-              );
-            })
+                {isUser && (
+                  <View style={styles.userIconCircle}>
+                    <User size={16} color="#fff" />
+                  </View>
+                )}
+              </View>
+            );
+          })}
+
+          {loading && (
+            <View style={[styles.messageRow, styles.coachRow]}>
+              <View style={styles.botIconCircle}>
+                <Bot size={16} color="#FF6B35" />
+              </View>
+              <View style={[styles.messageBubble, styles.coachBubble, { flexDirection: 'row', gap: 6, alignItems: 'center' }]}>
+                <ActivityIndicator size="small" color="#FF6B35" />
+                <Text style={{ color: '#9ca3af', fontSize: 13 }}>Thinking...</Text>
+              </View>
+            </View>
           )}
 
-          {loading ? (
-            <View style={[styles.messageRow, { alignSelf: 'flex-start' }]}>
-              <View style={styles.msgAvatarBg}>
-                <Bot size={16} color={C.orange} />
-              </View>
-              <View style={[styles.messageBubble, styles.coachBubble, { flexDirection: 'row', gap: 6, alignItems: 'center', minWidth: 60, justifyContent: 'center' }]}>
-                <ActivityIndicator size="small" color={C.orange} />
+          {!loading && currentOptions.length > 0 && (
+            <View style={{ marginTop: 12, paddingLeft: 34 }}>
+              <Text style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8, fontWeight: '600' }}>
+                Follow-up Suggestions:
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {currentOptions.map((opt, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    onPress={() => handleSend(opt)}
+                    style={styles.optionPill}
+                    activeOpacity={0.7}
+                  >
+                    <Sparkles size={12} color="#FF6B35" style={{ marginRight: 6 }} />
+                    <Text style={styles.optionText}>{opt}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
             </View>
-          ) : null}
+          )}
         </ScrollView>
 
-        {/* Dynamic Choice Options UI */}
-        {currentOptions.length > 0 ? (
-          <View style={styles.optionsContainer}>
-            <Text style={styles.optionsTitle}>SELECT AN OPTION</Text>
-            
-            <View style={styles.dropdownRow}>
-              {Platform.OS === 'web' ? (
-                <select
-                  value={selectedOption}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setSelectedOption(val);
-                    setInput(val);
-                  }}
-                  disabled={loading}
-                  style={styles.dropdownSelect}
-                >
-                  <option value="">-- Choose an option --</option>
-                  {currentOptions.map((opt, i) => (
-                    <option key={i} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
-
-              <TouchableOpacity
-                onPress={() => {
-                  const toSend = selectedOption || input;
-                  if (toSend) {
-                    handleSend(toSend);
-                  }
-                }}
-                disabled={(!selectedOption && !input.trim()) || loading}
-                style={[
-                  styles.enterOptionBtn,
-                  (selectedOption || input.trim()) ? { backgroundColor: C.orange } : { backgroundColor: 'rgba(255,255,255,0.05)' }
-                ]}
-              >
-                <Text style={[styles.enterOptionBtnText, (selectedOption || input.trim()) ? { color: '#fff' } : { color: '#666' }]}>
-                  Enter ↵
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.optionsChipGrid}>
-              {currentOptions.map((opt, idx) => {
-                const isSelected = selectedOption === opt.value || input === opt.value;
-                return (
-                  <TouchableOpacity
-                    key={idx}
-                    disabled={loading}
-                    onPress={() => {
-                      setSelectedOption(opt.value);
-                      setInput(opt.value);
-                    }}
-                    style={[
-                      styles.optionChip,
-                      isSelected ? { backgroundColor: 'rgba(255,107,53,0.25)', borderColor: C.orange } : { backgroundColor: '#171a20', borderColor: C.border }
-                    ]}
-                  >
-                    <Text style={[styles.optionChipText, isSelected ? { color: C.orange, fontWeight: '700' } : { color: '#ccc' }]}>
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        ) : null}
-
-        {/* Input container */}
-        <View style={styles.inputContainer}>
+        <View style={styles.inputBar}>
           <TextInput
-            placeholder="Type your health question here..."
-            placeholderTextColor="#666"
+            style={styles.input}
+            placeholder="Ask about calories, macros, diets..."
+            placeholderTextColor="#9ca3af"
             value={input}
-            onChangeText={(txt) => {
-              setInput(txt);
-              if (selectedOption && txt !== selectedOption) {
-                setSelectedOption('');
-              }
-            }}
+            onChangeText={setInput}
+            onSubmitEditing={() => handleSend()}
+            returnKeyType="send"
             editable={!loading}
-            onSubmitEditing={() => {
-              if (loading) return;
-              const toSend = selectedOption || input;
-              if (toSend && toSend.trim()) {
-                handleSend(toSend);
-              }
-            }}
-            style={[styles.textInput, loading ? { opacity: 0.6 } : null]}
           />
           <TouchableOpacity 
-            onPress={() => {
-              if (loading) return;
-              const toSend = selectedOption || input;
-              if (toSend && toSend.trim()) {
-                handleSend(toSend);
-              }
-            }}
-            disabled={(!input.trim() && !selectedOption) || loading} 
-            style={[
-              styles.sendBtn,
-              (input.trim() || selectedOption) && !loading ? { backgroundColor: C.orange } : { backgroundColor: 'rgba(255,255,255,0.03)' }
-            ]}
+            style={[styles.sendButton, (!input.trim() || loading) && styles.disabledSend]}
+            onPress={() => handleSend()}
+            disabled={!input.trim() || loading}
+            activeOpacity={0.8}
           >
-            <Send size={18} color={(input.trim() || selectedOption) && !loading ? '#fff' : '#444'} />
+            <Send size={18} color="#fff" />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -366,159 +282,118 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  messagesContainer: {
-    flexGrow: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 14,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
+  container: {
     flex: 1,
-    paddingHorizontal: 20,
-    paddingVertical: 40,
+    backgroundColor: '#0a0a0a',
   },
-  botIconBg: {
-    backgroundColor: 'rgba(255,107,53,0.1)',
-    padding: 20,
-    borderRadius: 40,
-    marginBottom: 16,
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#fff',
-    marginBottom: 6,
-  },
-  emptyDesc: {
-    color: C.muted,
-    fontSize: 13,
-    maxWidth: 280,
-    textAlign: 'center',
-    lineHeight: 18,
+  messagesList: {
+    flex: 1,
   },
   messageRow: {
-    gap: 10,
-    maxWidth: '85%',
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginBottom: 14,
+    gap: 8,
   },
-  msgAvatarBg: {
-    backgroundColor: 'rgba(255,107,53,0.1)',
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  userRow: {
+    justifyContent: 'flex-end',
+  },
+  coachRow: {
+    justifyContent: 'flex-start',
+  },
+  botIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 107, 53, 0.15)',
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 4,
+  },
+  userIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#3b82f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
   },
   messageBubble: {
-    borderRadius: 16,
+    maxWidth: '80%',
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexShrink: 1,
+    paddingVertical: 10,
+    borderRadius: 16,
   },
   userBubble: {
-    backgroundColor: C.orange,
+    backgroundColor: '#FF6B35',
     borderBottomRightRadius: 4,
   },
   coachBubble: {
-    backgroundColor: C.card2,
+    backgroundColor: '#1f1f1f',
     borderWidth: 1,
-    borderColor: C.border,
+    borderColor: '#2e2e2e',
     borderBottomLeftRadius: 4,
   },
   errorBubble: {
+    borderColor: '#ef4444',
     backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
-    borderBottomLeftRadius: 4,
   },
   messageText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  userText: {
     color: '#fff',
-    fontSize: 13,
-    lineHeight: 19,
+    fontWeight: '500',
   },
-  optionsContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#12141a',
-    borderTopWidth: 1,
-    borderColor: C.border,
+  coachText: {
+    color: '#e5e7eb',
   },
-  optionsTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: C.orange,
-    letterSpacing: 0.5,
-    marginBottom: 8,
-  },
-  dropdownRow: {
+  optionPill: {
     flexDirection: 'row',
-    gap: 8,
     alignItems: 'center',
-    marginBottom: 8,
-  },
-  dropdownSelect: {
-    flex: 1,
-    backgroundColor: '#1b1f26',
-    color: '#fff',
-    borderColor: 'rgba(255,107,53,0.3)',
+    backgroundColor: '#1f1f1f',
     borderWidth: 1,
-    borderRadius: 8,
-    padding: 8,
-    fontSize: 13,
-    outline: 'none'
-  },
-  enterOptionBtn: {
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  enterOptionBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  optionsChipGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  optionChip: {
-    borderWidth: 1,
+    borderColor: '#374151',
     borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  optionChipText: {
+  optionText: {
+    color: '#e5e7eb',
     fontSize: 12,
+    fontWeight: '500',
   },
-  inputContainer: {
+  inputBar: {
     flexDirection: 'row',
-    gap: 10,
-    padding: 16,
-    backgroundColor: C.card,
-    borderTopWidth: 1,
-    borderColor: C.border,
     alignItems: 'center',
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: C.bg,
-    borderWidth: 1,
-    borderColor: C.border,
-    borderRadius: 10,
     paddingHorizontal: 14,
-    height: 44,
+    paddingVertical: 10,
+    backgroundColor: '#171717',
+    borderTopWidth: 1,
+    borderTopColor: '#262626',
+    gap: 8,
+  },
+  input: {
+    flex: 1,
+    backgroundColor: '#262626',
     color: '#fff',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
     fontSize: 14,
   },
-  sendBtn: {
-    borderRadius: 10,
-    width: 44,
-    height: 44,
+  sendButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF6B35',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  disabledSend: {
+    backgroundColor: '#404040',
+    opacity: 0.5,
+  },
 });
-

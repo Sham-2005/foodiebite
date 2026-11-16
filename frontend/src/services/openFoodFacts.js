@@ -3,10 +3,11 @@
 //  All Open Food Facts API calls + filter + rank logic
 // ─────────────────────────────────────────────────────────────
 
-import { FOOD_ITEMS } from '../data/mockData';
-import { FALLBACK_FOODS } from '../data/fallbackFoods';
-import { resolveFoodImage, resolveFoodGrade } from './foodHelpers';
-import { normalizeFoodName, normalizeFoodItem, normalizeFoodList, deduplicateFoods } from './foodNameNormalizer';
+import { FOOD_ITEMS } from '../data/mockData.js';
+import { FALLBACK_FOODS } from '../data/fallbackFoods.js';
+import { resolveFoodImage, resolveFoodGrade } from './foodHelpers.js';
+import { normalizeFoodName, normalizeFoodItem, normalizeFoodList, deduplicateFoods } from './foodNameNormalizer.js';
+import { getItemSync } from './storage.js';
 
 const BASE = 'https://world.openfoodfacts.org';
 
@@ -150,7 +151,7 @@ export async function searchFoods(term, pageSize = 20, countryCode = 'in') {
   }
 
   try {
-    const token = localStorage.getItem('nb_token');
+    const token = getItemSync('nb_token');
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -178,7 +179,7 @@ export async function getProductById(barcode) {
   }
 
   try {
-    const token = localStorage.getItem('nb_token');
+    const token = getItemSync('nb_token');
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -413,7 +414,7 @@ export async function getRecommendations(preferences, count = 20) {
   }
 
   try {
-    const token = localStorage.getItem('nb_token');
+    const token = getItemSync('nb_token');
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -456,7 +457,7 @@ export async function searchByQuery(query, preferences, count = 20) {
   }
 
   try {
-    const token = localStorage.getItem('nb_token');
+    const token = getItemSync('nb_token');
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 

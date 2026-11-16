@@ -251,8 +251,8 @@ export default function AppLayout({ children, noPadding, footer, hideNearby = fa
               }
             }}
             style={styles.floatingScannerButton}
-            accessibilityRole="button"
-            accessibilityLabel="Scan Food Nutrition"
+            role="button"
+            aria-label="Scan Food Nutrition"
           >
             <Camera size={22} color="#fff" />
           </TouchableOpacity>

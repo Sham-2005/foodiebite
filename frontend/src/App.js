@@ -1,9 +1,11 @@
 import React, { useEffect, useState, Suspense, lazy } from 'react';
 import { View, Text, ActivityIndicator } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { AppProvider, useApp } from './context/AppContext';
-import { hydrateLocalStorage } from './services/localStoragePolyfill';
+import { initStorage } from './services/storage.js';
+import DevSupabaseStatus from './components/DevSupabaseStatus';
 
 // Critical core screens loaded eagerly for instant first-paint
 import SplashScreen from './screens/SplashScreen';
@@ -48,6 +50,7 @@ const LazyCompareScreen = withLazy(() => import('./screens/CompareScreen'));
 const LazyChatScreen = withLazy(() => import('./screens/ChatScreen'));
 const LazyAnalyticsScreen = withLazy(() => import('./screens/AnalyticsScreen'));
 const LazyNutritionScannerScreen = withLazy(() => import('./screens/NutritionScannerScreen'));
+const LazyAuthCallbackScreen = withLazy(() => import('./screens/AuthCallbackScreen'));
 
 const Stack = createStackNavigator();
 
@@ -57,7 +60,7 @@ function AppContent() {
 
   useEffect(() => {
     async function init() {
-      await hydrateLocalStorage();
+      await initStorage();
       setStorageHydrated(true);
     }
     init();
@@ -78,55 +81,55 @@ function AppContent() {
   const hasCompletedProfile =
     isAdminUser || (user && (user.profileCompleted === true || (!!user.age && !!user.gender)));
 
+  const initialRoute = !user
+    ? "Splash"
+    : isAdminUser
+    ? "Admin"
+    : !hasCompletedProfile
+    ? "CompleteProfile"
+    : "Home";
+
   return (
     <Stack.Navigator
-      initialRouteName={!user ? "Splash" : (isAdminUser ? "Admin" : "Home")}
+      initialRouteName={initialRoute}
       screenOptions={{ headerShown: false, cardStyle: { backgroundColor: '#111318' } }}
     >
-      {!user ? (
-        <>
-          <Stack.Screen name="Splash" component={SplashScreen} />
-          <Stack.Screen name="Onboarding" component={LazyOnboardingScreen} />
-          <Stack.Screen name="SignIn" component={SignInScreen} />
-          <Stack.Screen name="SignUp" component={SignUpScreen} />
-          <Stack.Screen name="Admin" component={LazyProtectedAdminRoute} />
-          <Stack.Screen name="NutritionScanner" component={LazyNutritionScannerScreen} />
-        </>
-      ) : isAdminUser ? (
-        <>
-          <Stack.Screen name="Admin" component={LazyProtectedAdminRoute} />
-          <Stack.Screen name="SignIn" component={SignInScreen} />
-        </>
-      ) : !hasCompletedProfile ? (
-        <Stack.Screen name="CompleteProfile" component={LazyCompleteProfileScreen} />
-      ) : (
-        <>
-          <Stack.Screen name="Home" component={HomeScreen} />
-          <Stack.Screen name="Search" component={LazySearchScreen} />
-          <Stack.Screen name="Preferences" component={LazyPreferencesScreen} />
-          <Stack.Screen name="FoodDetail" component={LazyFoodDetailScreen} />
-          <Stack.Screen name="Favorites" component={LazyFavoritesScreen} />
-          <Stack.Screen name="Profile" component={LazyProfileScreen} />
-          <Stack.Screen name="AI" component={LazyAIScreen} />
-          <Stack.Screen name="PersonalInfo" component={LazyPersonalInformation} />
-          <Stack.Screen name="MedicalReports" component={LazyMedicalReportsScreen} />
-          <Stack.Screen name="RecommendationsAll" component={LazyRecommendationsAllScreen} />
-          <Stack.Screen name="PrivacyPolicy" component={LazyPrivacyPolicyScreen} />
-          <Stack.Screen name="TermsConditions" component={LazyTermsAndConditionsScreen} />
-          <Stack.Screen name="AboutUs" component={LazyAboutUsScreen} />
-          <Stack.Screen name="Feedback" component={LazyFeedbackScreen} />
-          <Stack.Screen name="Compare" component={LazyCompareScreen} />
-          <Stack.Screen name="Chat" component={LazyChatScreen} />
-          <Stack.Screen name="Analytics" component={LazyAnalyticsScreen} />
-          <Stack.Screen name="NutritionScanner" component={LazyNutritionScannerScreen} />
-        </>
-      )}
+      <Stack.Screen name="Splash" component={SplashScreen} />
+      <Stack.Screen name="Onboarding" component={LazyOnboardingScreen} />
+      <Stack.Screen name="SignIn" component={SignInScreen} />
+      <Stack.Screen name="SignUp" component={SignUpScreen} />
+      <Stack.Screen name="AuthCallback" component={LazyAuthCallbackScreen} />
+      <Stack.Screen name="CompleteProfile" component={LazyCompleteProfileScreen} />
+      <Stack.Screen name="Home" component={HomeScreen} />
+      <Stack.Screen name="Admin" component={LazyProtectedAdminRoute} />
+      <Stack.Screen name="Search" component={LazySearchScreen} />
+      <Stack.Screen name="Preferences" component={LazyPreferencesScreen} />
+      <Stack.Screen name="FoodDetail" component={LazyFoodDetailScreen} />
+      <Stack.Screen name="Favorites" component={LazyFavoritesScreen} />
+      <Stack.Screen name="Profile" component={LazyProfileScreen} />
+      <Stack.Screen name="AI" component={LazyAIScreen} />
+      <Stack.Screen name="PersonalInfo" component={LazyPersonalInformation} />
+      <Stack.Screen name="MedicalReports" component={LazyMedicalReportsScreen} />
+      <Stack.Screen name="RecommendationsAll" component={LazyRecommendationsAllScreen} />
+      <Stack.Screen name="PrivacyPolicy" component={LazyPrivacyPolicyScreen} />
+      <Stack.Screen name="TermsConditions" component={LazyTermsAndConditionsScreen} />
+      <Stack.Screen name="AboutUs" component={LazyAboutUsScreen} />
+      <Stack.Screen name="Feedback" component={LazyFeedbackScreen} />
+      <Stack.Screen name="Compare" component={LazyCompareScreen} />
+      <Stack.Screen name="Chat" component={LazyChatScreen} />
+      <Stack.Screen name="Analytics" component={LazyAnalyticsScreen} />
+      <Stack.Screen name="NutritionScanner" component={LazyNutritionScannerScreen} />
     </Stack.Navigator>
   );
 }
 
 const linking = {
-  prefixes: ['http://localhost:3000', 'http://127.0.0.1:3000', '/'],
+  prefixes: [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'foodiebite://',
+    '/'
+  ],
   config: {
     screens: {
       Admin: 'admin',
@@ -135,17 +138,25 @@ const linking = {
       Home: 'home',
       Profile: 'profile',
       Compare: 'compare',
-      NutritionScanner: 'scanner'
+      NutritionScanner: 'scanner',
+      AuthCallback: 'auth/callback',
+      CompleteProfile: 'complete-profile',
+      Preferences: 'preferences',
+      Favorites: 'favorites',
+      Search: 'search',
     }
   }
 };
 
 export default function App() {
   return (
-    <AppProvider>
-      <NavigationContainer linking={linking}>
-        <AppContent />
-      </NavigationContainer>
-    </AppProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AppProvider>
+        <NavigationContainer linking={linking}>
+          <AppContent />
+          {typeof __DEV__ !== 'undefined' && __DEV__ && <DevSupabaseStatus />}
+        </NavigationContainer>
+      </AppProvider>
+    </GestureHandlerRootView>
   );
 }

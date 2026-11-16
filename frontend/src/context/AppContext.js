@@ -1,11 +1,12 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   apiGetMe, apiLogout, setToken, clearToken, clearAdminSession,
   apiGetFavorites, apiAddFavoriteFood, apiRemoveFavoriteFood,
-  apiUpdatePreferences, apiSyncUser,
+  apiUpdatePreferences, apiSyncUser, getLocalActiveUser, saveLocalActiveUser,
 } from '../services/api';
-import { onAuthStateChanged } from 'firebase/auth';
-import { auth, isFirebaseConfigured } from '../services/firebase';
+import { onAuthStateChange as onSupabaseAuthStateChange, getCurrentSession as getSupabaseCurrentSession } from '../services/supabaseAuthService';
+import { getMyProfile as getSupabaseMyProfile } from '../services/supabaseProfileService';
+import { isSupabaseConfigured } from '../config/supabaseClient';
 import {
   saveSession,
   getSession,
@@ -14,32 +15,33 @@ import {
   getPreferences,
   refreshSessionExpiration
 } from '../services/localStorageService';
+import storage, { getItemSync, removeItemSync } from '../services/storage';
 
 const AppContext = createContext(null);
 
 export function AppProvider({ children }) {
-  const [user,        setUserState]   = useState(null);
+  const [user, setUserState] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
   const [preferences, setPreferencesState] = useState({
-    dietType:    'Vegetarian',
-    spiceLevel:  'Medium',
-    cuisines:    ['indian'],
+    dietType: 'Vegetarian',
+    spiceLevel: 'Medium',
+    cuisines: ['indian'],
     healthGoals: ['healthy_eating'],
-    country:     'in',
-    allergies:   [],
-    fasting:     { active: false, type: null, allowedCategories: [], restrictedCategories: [] },
+    country: 'in',
+    allergies: [],
+    fasting: { active: false, type: null, allowedCategories: [], restrictedCategories: [] },
     maxCalories: null,
-    minProtein:  null,
-    minGrade:    'c',
+    minProtein: null,
+    minGrade: 'c',
   });
 
-  const [favorites,         setFavorites]         = useState({ foods: [] });
-  const [savedFoodObjects,  setSavedFoodObjects]  = useState([]);
-  const [darkMode,          setDarkMode]          = useState(true);
-  const [cart,              setCart]              = useState([]);
+  const [favorites, setFavorites] = useState({ foods: [] });
+  const [savedFoodObjects, setSavedFoodObjects] = useState([]);
+  const [darkMode, setDarkMode] = useState(true);
+  const [cart, setCart] = useState([]);
 
-  const [notifications,     setNotifications]     = useState([
+  const [notifications, setNotifications] = useState([
     {
       id: 1,
       title: 'Welcome to FoodieBite! 🍏',
@@ -75,24 +77,35 @@ export function AppProvider({ children }) {
   }
 
   // ── Instant Offline Rehydration ──────────────────────
-  // Runs synchronously before Firebase onAuthStateChanged fires.
-  // Must restore age/gender so VerificationGuard doesn't redirect
-  // to /complete-profile during the Firebase auth loading window.
   useEffect(() => {
-    const cachedSession = getSession();
+    const cachedSession = getSession() || getLocalActiveUser();
     if (cachedSession) {
+      // Defensively purge any legacy mock session to prevent accidental restoration
+      if (
+        cachedSession.isMock ||
+        /mock.*@|mockuser/i.test(cachedSession.email || '') ||
+        /mock-google-|mock-token-/i.test(cachedSession.id || cachedSession.token || '')
+      ) {
+        clearSession();
+        removeItemSync('nb_mock_active');
+        removeItemSync('nb_active_user');
+        setAuthLoading(false);
+        return;
+      }
+
+      const isCompleted = Boolean(cachedSession.profileCompleted || (cachedSession.age && cachedSession.gender));
       setUserState({
-        id:               cachedSession.uid,
-        uid:              cachedSession.uid,
-        name:             cachedSession.displayName,
-        email:            cachedSession.email,
-        // Restore physical profile fields saved by saveSession()
-        age:              cachedSession.age   || null,
-        gender:           cachedSession.gender || null,
-        profileCompleted: cachedSession.profileCompleted || false,
-        preferences:      getPreferences() || preferences
+        id: cachedSession.uid || cachedSession.id,
+        uid: cachedSession.uid || cachedSession.id,
+        name: cachedSession.displayName || cachedSession.name,
+        email: cachedSession.email,
+        role: cachedSession.role || ((cachedSession.email || '').toLowerCase() === 'sham111205s@gmail.com' ? 'admin' : 'user'),
+        age: cachedSession.age || null,
+        gender: cachedSession.gender || null,
+        profileCompleted: isCompleted,
+        preferences: cachedSession.preferences || getPreferences() || preferences
       });
-      const cachedPrefs = getPreferences();
+      const cachedPrefs = cachedSession.preferences || getPreferences();
       if (cachedPrefs) {
         setPreferencesState(cachedPrefs);
       }
@@ -100,31 +113,82 @@ export function AppProvider({ children }) {
     }
   }, []);
 
-  // ── Rehydrate session on mount (Firebase and API sync) ────────────────
+  // ── Rehydrate session on mount (Supabase Auth prioritized, Firebase fallback) ────────────────
   useEffect(() => {
-    if (isFirebaseConfigured && auth) {
-      const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-        if (fbUser) {
+    if (isSupabaseConfigured) {
+      // 1. Initial check for existing active session
+      getSupabaseCurrentSession().then(async (res) => {
+        if (res?.session?.user) {
           try {
-            const token = await fbUser.getIdToken();
-            setToken(token);
-            const data = await apiGetMe();
-
-            // Compute profileCompleted so VerificationGuard and saveSession()
-            // always have it, even if the backend doesn't return it explicitly.
+            setToken(res.session.access_token);
+            const pRes = await getSupabaseMyProfile();
+            const profile = pRes?.profile;
+            if (profile && (profile.disabled === true || profile.account_status === 'disabled')) {
+              await logout();
+              return;
+            }
+            const cleanEmail = (res.session.user.email || '').trim().toLowerCase();
             const fullUser = {
-              ...data.user,
-              profileCompleted: !!(data.user?.age && data.user?.gender),
+              id: res.session.user.id,
+              uid: res.session.user.id,
+              name: profile?.name || res.session.user.user_metadata?.full_name || (cleanEmail ? cleanEmail.split('@')[0] : 'User'),
+              email: cleanEmail,
+              role: profile?.role || (cleanEmail === 'sham111205s@gmail.com' ? 'admin' : 'user'),
+              age: profile?.age || null,
+              gender: profile?.gender || null,
+              dietType: profile?.diet_type || 'Vegetarian',
+              preferences: profile?.preferences || preferences,
+              profileCompleted: !!(profile?.age && profile?.gender),
+              disabled: profile?.disabled || false,
+              accountStatus: profile?.account_status || 'active',
             };
+            setUserState(fullUser);
+            saveLocalActiveUser(fullUser);
+            saveSession({ ...fullUser, token: res.session.access_token });
+            if (fullUser.preferences) {
+              setPreferencesState(fullUser.preferences);
+              savePreferences(fullUser.preferences);
+            }
+          } catch (e) {
+            console.error('Supabase initial session sync error:', e);
+          } finally {
+            setAuthLoading(false);
+          }
+        } else {
+          setAuthLoading(false);
+        }
+      }).catch(() => setAuthLoading(false));
 
+      // 2. Subscribe to Supabase Auth state changes
+      const subscription = onSupabaseAuthStateChange(async (event, session) => {
+        if (session && session.user) {
+          try {
+            setToken(session.access_token);
+            const pRes = await getSupabaseMyProfile();
+            const profile = pRes?.profile;
+            if (profile && (profile.disabled === true || profile.account_status === 'disabled')) {
+              await logout();
+              return;
+            }
+            const cleanEmail = (session.user.email || '').trim().toLowerCase();
+            const fullUser = {
+              id: session.user.id,
+              uid: session.user.id,
+              name: profile?.name || session.user.user_metadata?.full_name || (cleanEmail ? cleanEmail.split('@')[0] : 'User'),
+              email: cleanEmail,
+              role: profile?.role || (cleanEmail === 'sham111205s@gmail.com' ? 'admin' : 'user'),
+              age: profile?.age || null,
+              gender: profile?.gender || null,
+              dietType: profile?.diet_type || 'Vegetarian',
+              preferences: profile?.preferences || preferences,
+              profileCompleted: !!(profile?.age && profile?.gender),
+              disabled: profile?.disabled || false,
+              accountStatus: profile?.account_status || 'active',
+            };
             setUserState(fullUser);
             setAuthLoading(false);
-
-            // Reconcile user with admin directory in background
-            apiSyncUser(fullUser).catch(err => console.warn('Directory auto-reconcile note:', err.message));
-
-            // Save session to offline cache
-            saveSession({ ...fullUser, token });
+            saveLocalActiveUser(fullUser);
+            saveSession({ ...fullUser, token: session.access_token });
             if (fullUser.preferences) {
               setPreferencesState(fullUser.preferences);
               savePreferences(fullUser.preferences);
@@ -138,26 +202,12 @@ export function AppProvider({ children }) {
                   foods: (favData.favoriteFoods || []).map(f => f.foodId),
                 });
               }
-            }).catch(() => {});
+            }).catch(() => { });
           } catch (e) {
-            console.error('Session sync error:', e);
-            clearToken();
-            clearSession();
+            console.error('Supabase auth state sync error:', e);
             setAuthLoading(false);
           }
-        } else {
-          const token = localStorage.getItem('nb_token');
-          if (token) {
-            try {
-              const data = await apiGetMe();
-              if (data && data.user) {
-                setUserState(data.user);
-                saveSession({ ...data.user, token });
-                setAuthLoading(false);
-                return;
-              }
-            } catch (_) {}
-          }
+        } else if (event === 'SIGNED_OUT' || !session) {
           setUserState(null);
           clearToken();
           clearSession();
@@ -166,9 +216,14 @@ export function AppProvider({ children }) {
           setAuthLoading(false);
         }
       });
-      return () => unsubscribe();
+
+      return () => {
+        if (subscription && typeof subscription.unsubscribe === 'function') {
+          subscription.unsubscribe();
+        }
+      };
     } else {
-      const token = localStorage.getItem('nb_token');
+      const token = getItemSync('nb_token');
       if (token) {
         apiGetMe()
           .then(data => {
@@ -186,7 +241,7 @@ export function AppProvider({ children }) {
                   foods: (favData.favoriteFoods || []).map(f => f.foodId),
                 });
               }
-            }).catch(() => {});
+            }).catch(() => { });
           })
           .catch(() => {
             clearToken();
@@ -200,7 +255,7 @@ export function AppProvider({ children }) {
   }, []);
 
   // ── Set user after login/register ────────────────────
-  function setUser(userData) {
+  const setUser = useCallback((userData) => {
     if (!userData) {
       setUserState(null);
       clearToken();
@@ -210,32 +265,28 @@ export function AppProvider({ children }) {
       return;
     }
     setUserState(userData);
+    saveLocalActiveUser(userData);
     saveSession(userData);
     if (userData.preferences) {
       setPreferencesState(userData.preferences);
       savePreferences(userData.preferences);
     }
-  }
+  }, []);
 
   // ── Logout and clear all storage ─────────────────────
   async function logout() {
     try {
       await apiLogout();
-    } catch (_) {}
+    } catch (_) { }
     setUserState(null);
     clearToken();
     clearSession();
     clearAdminSession();
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('nb_token');
-      localStorage.removeItem('nb_active_session');
-      localStorage.removeItem('nb_mock_active');
-      localStorage.removeItem('foodiebite_admin_session');
-    }
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.removeItem('foodiebite_admin_session');
-      sessionStorage.removeItem('foodiebite_redirect_after_login');
-    }
+    removeItemSync('nb_token');
+    removeItemSync('nb_active_session');
+    removeItemSync('nb_mock_active');
+    removeItemSync('foodiebite_admin_session');
+    removeItemSync('foodiebite_redirect_after_login');
     setFavorites({ foods: [] });
     setSavedFoodObjects([]);
   }
@@ -327,7 +378,7 @@ export function AppProvider({ children }) {
       darkMode, setDarkMode,
       cart, addToCart, removeFromCart,
       notifications, markAllAsRead, clearNotification,
-      emailVerified: true, setEmailVerified: () => {}, checkVerificationStatus,
+      emailVerified: true, setEmailVerified: () => { }, checkVerificationStatus,
       nearbyTrigger, setNearbyTrigger,
     }}>
       {children}

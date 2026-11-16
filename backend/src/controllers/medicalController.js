@@ -14,12 +14,19 @@
 
 const fs   = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
+const { getUserSupabaseClient, getSupabaseClient, getSupabaseAdmin } = require('../config/supabase');
 const { processDocument }       = require('../services/documentProcessorService');
 const { analyzeReport }         = require('../services/medicalAnalysisService');
 const { getFirebaseAdmin, getFirestoreDb } = require('../config/firebase');
 const { uploadReportFile, deleteReportFile } = require('../services/cloudStorageService');
 const persistentReportDb        = require('../services/persistentReportDb');
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isValidUUID(str) {
+  return typeof str === 'string' && UUID_REGEX.test(str.trim());
+}
 
 function withTimeout(promise, ms = 2500) {
   return Promise.race([
@@ -145,8 +152,8 @@ exports.uploadMedicalReport = async (req, res, next) => {
     }
 
     const { notes = '', reportName = '' } = req.body;
-    const userId = req.user?.uid || req.user?.id || 'guest_user';
-    const reportId = `report-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const userId = req.user?.id || req.user?.uid || 'guest_user';
+    const reportId = crypto.randomUUID();
 
     // ── 2. OCR / text extraction ──────────────────────────────
     let extractionResult;
@@ -283,7 +290,60 @@ exports.uploadMedicalReport = async (req, res, next) => {
       findings: analysis.findings
     });
 
-    // ── 9. Cloud Firestore persistence (if available) ──────────
+    // ── 9. Supabase PostgreSQL Primary Persistence ─────────────
+    let supabaseSaved = false;
+    const token = req.token;
+    const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
+    if (client && isValidUUID(userId)) {
+      try {
+        const { error: repInsertError } = await client
+          .from('medical_reports')
+          .insert({
+            id: reportId,
+            user_id: userId,
+            report_name: report.reportName,
+            storage_path: report.storagePath,
+            file_url: report.fileUrl,
+            file_size_bytes: req.file.size || 0,
+            mime_type: report.mimeType,
+            document_type: extractionResult.documentType || 'digital_pdf',
+            processing_status: extractionResult.success ? 'completed' : 'ocr_failed',
+            ocr_confidence: extractionResult.confidence || 0,
+            raw_ocr_text: rawOcrText,
+            notes: notes || '',
+            extracted_data: report.extractedData,
+            analysis: report.analysis,
+            created_at: now,
+            updated_at: now
+          });
+
+        if (!repInsertError) {
+          supabaseSaved = true;
+        } else {
+          console.warn('⚠️ Supabase medical report insert warning:', repInsertError.message);
+        }
+
+        // Upsert health profile
+        await client
+          .from('health_profiles')
+          .upsert({
+            user_id: userId,
+            overall_score: analysis.healthScores?.overall ?? 100,
+            overall_label: analysis.healthScores?.overallLabel || 'Good',
+            category_scores: analysis.healthScores?.categories || {},
+            wellness_concerns: analysis.wellnessConcerns || [],
+            food_profile: analysis.foodProfile || {},
+            findings: analysis.findings || [],
+            last_updated: now
+          }, { onConflict: 'user_id' })
+          .catch(e => console.warn('⚠️ Supabase health profile upsert warning:', e.message));
+
+      } catch (sbErr) {
+        console.warn('⚠️ Supabase medical persistence error:', sbErr.message);
+      }
+    }
+
+    // ── 10. Cloud Firestore persistence (optional backup) ──────
     let firestoreSaved = false;
     try {
       const db = await getFirestore();
@@ -295,11 +355,11 @@ exports.uploadMedicalReport = async (req, res, next) => {
         await withTimeout(userRef.set(
           { medicalReports: FieldValue.arrayUnion(report) },
           { merge: true }
-        ), 1500).catch(() => {});
+        ), 1000).catch(() => {});
 
         await withTimeout(
           db.collection('medicalReports').doc(reportId).set(report),
-          1500
+          1000
         ).catch(() => {});
 
         await updateHealthProfile(db, userId, analysis).catch(() => {});
@@ -313,6 +373,7 @@ exports.uploadMedicalReport = async (req, res, next) => {
       success: true,
       message: 'Medical report uploaded, scanned and saved successfully',
       dbSaved: true,
+      supabaseSaved,
       firestoreSaved,
       cloudStored: storageInfo.provider === 'cloudinary' || storageInfo.provider === 'firebase',
       report
@@ -372,24 +433,71 @@ async function updateHealthProfile(db, userId, analysis) {
 
 exports.getMedicalReports = async (req, res, next) => {
   try {
-    const userId = req.user?.uid || req.user?.id || 'guest_user';
-    
-    // 1. Get from durable persistent DB
-    const savedReports = persistentReportDb.getReports(userId);
+    const userId = req.user?.id || req.user?.uid || 'guest_user';
+    const token = req.token;
     const reportsMap = new Map();
 
-    for (const r of savedReports) {
-      const rId = r.id || r._id;
-      reportsMap.set(rId, r);
+    // 1. Query Supabase PostgreSQL (Primary)
+    const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
+    if (client && isValidUUID(userId)) {
+      try {
+        const { data: sbReports, error: sbErr } = await client
+          .from('medical_reports')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false });
+
+        if (sbReports && sbReports.length > 0) {
+          for (const r of sbReports) {
+            const mapped = {
+              id: r.id,
+              _id: r.id,
+              userId: r.user_id,
+              reportName: r.report_name,
+              filename: r.report_name,
+              originalName: r.report_name,
+              storagePath: r.storage_path,
+              storageProvider: 'supabase',
+              fileUrl: r.file_url,
+              downloadUrl: r.file_url,
+              previewUrl: r.file_url,
+              mimeType: r.mime_type,
+              fileSize: r.file_size_bytes,
+              uploadDate: r.created_at,
+              uploadedAt: r.created_at,
+              uploadedAtIso: r.created_at,
+              notes: r.notes,
+              ocrConfidence: r.ocr_confidence,
+              documentType: r.document_type,
+              processingStatus: r.processing_status,
+              rawOcrText: r.raw_ocr_text,
+              extractedData: r.extracted_data || {},
+              analysis: r.analysis || {}
+            };
+            reportsMap.set(r.id, mapped);
+          }
+        }
+      } catch (sbErr) {
+        console.warn('⚠️ Supabase medical reports fetch warning:', sbErr.message);
+      }
     }
 
-    // 2. Also query Cloud Firestore if connected
+    // 2. Get from durable persistent DB (Disk fallback)
+    const savedReports = persistentReportDb.getReports(userId);
+    for (const r of savedReports) {
+      const rId = r.id || r._id;
+      if (!reportsMap.has(rId)) {
+        reportsMap.set(rId, r);
+      }
+    }
+
+    // 3. Fallback to Cloud Firestore if connected
     try {
       const db = await getFirestore();
       if (db) {
         const collSnap = await withTimeout(
           db.collection('medicalReports').where('userId', '==', userId).get(),
-          1500
+          1000
         ).catch(() => null);
 
         if (collSnap && !collSnap.empty) {
@@ -426,24 +534,77 @@ exports.getMedicalReports = async (req, res, next) => {
 exports.getMedicalReport = async (req, res, next) => {
   try {
     const { reportId } = req.params;
-    const userId = req.user?.uid || req.user?.id || 'guest_user';
+    const userId = req.user?.id || req.user?.uid || 'guest_user';
+    const token = req.token;
 
-    // 1. Check persistent disk DB first
+    // 1. Check Supabase PostgreSQL
+    const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
+    if (client && isValidUUID(reportId) && isValidUUID(userId)) {
+      try {
+        const { data: r, error } = await client
+          .from('medical_reports')
+          .select('*')
+          .eq('id', reportId)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (r) {
+          return res.status(200).json({
+            success: true,
+            report: {
+              id: r.id,
+              _id: r.id,
+              userId: r.user_id,
+              reportName: r.report_name,
+              filename: r.report_name,
+              originalName: r.report_name,
+              storagePath: r.storage_path,
+              storageProvider: 'supabase',
+              fileUrl: r.file_url,
+              downloadUrl: r.file_url,
+              previewUrl: r.file_url,
+              mimeType: r.mime_type,
+              fileSize: r.file_size_bytes,
+              uploadDate: r.created_at,
+              uploadedAt: r.created_at,
+              uploadedAtIso: r.created_at,
+              notes: r.notes,
+              ocrConfidence: r.ocr_confidence,
+              documentType: r.document_type,
+              processingStatus: r.processing_status,
+              rawOcrText: r.raw_ocr_text,
+              extractedData: r.extracted_data || {},
+              analysis: r.analysis || {}
+            }
+          });
+        }
+      } catch (sbErr) {
+        console.warn('⚠️ Supabase single report fetch warning:', sbErr.message);
+      }
+    }
+
+    // 2. Check persistent disk DB (strictly enforce tenant ownership)
     const persistentMatch = persistentReportDb.getReportById(reportId);
     if (persistentMatch) {
+      if (persistentMatch.userId && String(persistentMatch.userId) !== String(userId)) {
+        return res.status(404).json({ success: false, message: 'Report not found.' });
+      }
       return res.status(200).json({ success: true, report: persistentMatch });
     }
 
-    // 2. Fallback to Firestore
+    // 3. Fallback to Firestore (strictly enforce tenant ownership)
     try {
       const db = await getFirestore();
       if (db) {
         const docSnap = await withTimeout(
           db.collection('medicalReports').doc(reportId).get(),
-          1500
+          1000
         ).catch(() => null);
         if (docSnap && docSnap.exists) {
           const report = { id: docSnap.id, _id: docSnap.id, ...docSnap.data() };
+          if (report.userId && String(report.userId) !== String(userId)) {
+            return res.status(404).json({ success: false, message: 'Report not found.' });
+          }
           return res.status(200).json({ success: true, report });
         }
       }
@@ -464,30 +625,48 @@ exports.getMedicalReport = async (req, res, next) => {
 exports.deleteMedicalReport = async (req, res, next) => {
   try {
     const { reportId } = req.params;
-    const userId = req.user?.uid || req.user?.id || 'guest_user';
+    const userId = req.user?.id || req.user?.uid || 'guest_user';
+    const token = req.token;
 
-    // 1. Fetch report details to know cloud asset path
+    // 1. Fetch report details to know cloud asset path and verify ownership
     const report = persistentReportDb.getReportById(reportId);
+    if (report && report.userId && String(report.userId) !== String(userId)) {
+      return res.status(404).json({ success: false, message: 'Report not found.' });
+    }
 
     // 2. Delete cloud asset & local file
     if (report) {
       await deleteReportFile(report);
     }
 
-    // 3. Delete from persistent database
+    // 3. Delete from Supabase PostgreSQL
+    const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
+    if (client && isValidUUID(reportId) && isValidUUID(userId)) {
+      try {
+        await client
+          .from('medical_reports')
+          .delete()
+          .eq('id', reportId)
+          .eq('user_id', userId);
+      } catch (sbErr) {
+        console.warn('⚠️ Supabase medical report delete warning:', sbErr.message);
+      }
+    }
+
+    // 4. Delete from persistent database
     persistentReportDb.deleteReport(userId, reportId);
 
-    // 4. Delete from Firestore if available
+    // 5. Delete from Firestore if available
     try {
       const db = await getFirestore();
       if (db) {
-        await withTimeout(db.collection('medicalReports').doc(reportId).delete(), 1500).catch(() => {});
+        await withTimeout(db.collection('medicalReports').doc(reportId).delete(), 1000).catch(() => {});
         const userRef = db.collection('users').doc(userId);
-        const docSnap = await withTimeout(userRef.get(), 1500).catch(() => null);
+        const docSnap = await withTimeout(userRef.get(), 1000).catch(() => null);
         if (docSnap && docSnap.exists) {
           const reports = docSnap.data().medicalReports || [];
           const updatedReports = reports.filter(r => (r.id || r._id) !== reportId);
-          await withTimeout(userRef.update({ medicalReports: updatedReports }), 1500).catch(() => {});
+          await withTimeout(userRef.update({ medicalReports: updatedReports }), 1000).catch(() => {});
         }
       }
     } catch (fbErr) {
@@ -506,19 +685,61 @@ exports.deleteMedicalReport = async (req, res, next) => {
 
 exports.getHealthProfile = async (req, res, next) => {
   try {
-    const userId = req.user?.uid || req.user?.id || 'guest_user';
+    const userId = req.user?.id || req.user?.uid || 'guest_user';
+    const token = req.token;
 
-    // Check persistent DB first
-    const persistentProfile = persistentReportDb.getHealthProfile(userId);
-    if (persistentProfile) {
-      return res.status(200).json({ success: true, healthProfile: persistentProfile });
+    // 1. Check Supabase PostgreSQL health_profiles
+    const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
+    if (client && isValidUUID(userId)) {
+      try {
+        const { data: hp, error } = await client
+          .from('health_profiles')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (hp) {
+          return res.status(200).json({
+            success: true,
+            healthProfile: {
+              overallScore: hp.overall_score,
+              overallLabel: hp.overall_label,
+              categoryScores: hp.category_scores || {},
+              wellnessConcerns: hp.wellness_concerns || [],
+              foodProfile: hp.food_profile || { foodsToPrefer: [], foodsToLimit: [], recommendedNutrients: [] },
+              findings: hp.findings || [],
+              lastUpdated: hp.last_updated
+            }
+          });
+        }
+      } catch (sbErr) {
+        console.warn('⚠️ Supabase health profile fetch warning:', sbErr.message);
+      }
     }
 
+    // 2. Check persistent DB
+    const persistentProfile = persistentReportDb.getHealthProfile(userId);
+    if (persistentProfile) {
+      return res.status(200).json({
+        success: true,
+        healthProfile: {
+          overallScore: persistentProfile.overallScore ?? persistentProfile.overall ?? 100,
+          overallLabel: persistentProfile.overallLabel ?? 'Good',
+          categoryScores: persistentProfile.categoryScores || persistentProfile.categories || {},
+          wellnessConcerns: persistentProfile.wellnessConcerns || [],
+          foodProfile: persistentProfile.foodProfile || { foodsToPrefer: [], foodsToLimit: [], recommendedNutrients: [] },
+          findings: persistentProfile.findings || [],
+          lastUpdated: persistentProfile.lastUpdated || new Date().toISOString()
+        }
+      });
+    }
+
+    // 3. Fallback to Firestore
     try {
       const db = await getFirestore();
       if (db) {
-        const docSnap = await db.collection('users').doc(userId).get();
-        if (docSnap.exists) {
+        const docSnap = await withTimeout(db.collection('users').doc(userId).get(), 1000).catch(() => null);
+        if (docSnap && docSnap.exists) {
           const data = docSnap.data();
           if (data.healthProfile) {
             return res.status(200).json({ success: true, healthProfile: data.healthProfile });
@@ -552,7 +773,8 @@ exports.getHealthProfile = async (req, res, next) => {
 
 exports.saveManualValues = async (req, res, next) => {
   try {
-    const userId = req.user?.uid || req.user?.id || 'guest_user';
+    const userId = req.user?.id || req.user?.uid || 'guest_user';
+    const token = req.token;
     const { values = {}, notes = '' } = req.body;
 
     if (!values || Object.keys(values).length === 0) {
@@ -576,6 +798,25 @@ exports.saveManualValues = async (req, res, next) => {
       foodProfile: analysis.foodProfile,
       findings: analysis.findings
     });
+
+    // Supabase health_profile upsert
+    const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
+    if (client && isValidUUID(userId)) {
+      client
+        .from('health_profiles')
+        .upsert({
+          user_id: userId,
+          overall_score: analysis.healthScores?.overall ?? 100,
+          overall_label: analysis.healthScores?.overallLabel || 'Good',
+          category_scores: analysis.healthScores?.categories || {},
+          wellness_concerns: analysis.wellnessConcerns || [],
+          food_profile: analysis.foodProfile || {},
+          findings: analysis.findings || [],
+          last_updated: new Date().toISOString()
+        }, { onConflict: 'user_id' })
+        .then(() => {})
+        .catch(e => console.warn('⚠️ Supabase manual values health profile upsert warning:', e.message));
+    }
 
     try {
       const db = await getFirestore();

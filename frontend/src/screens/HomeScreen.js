@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, Modal, ActivityIndicator, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Bell, Search, SlidersHorizontal, RefreshCw, CloudRain, MapPin, Thermometer, X, Trash2, Check, Sparkles, AlertCircle, Scale, ArrowRight, Zap } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
@@ -8,8 +8,7 @@ import { FoodCardH, SectionHeader, SkeletonCard, ErrorState, C, MoodSelector } f
 import { useRecommendations, useWeatherContext } from '../hooks/useFoods';
 import { describeWeatherContext } from '../services/weather';
 import { apiGetMoodRecommendations } from '../services/api';
-import { collection, query, where, onSnapshot } from '../services/firebase';
-import { db, auth, isFirebaseConfigured } from '../services/firebase';
+import { getSupabaseClient, isSupabaseConfigured } from '../config/supabaseClient';
 import { getFrequentItems } from '../services/localStorageService';
 import { filterByCategory } from '../services/foodHelpers';
 import { trackRecommendationImpression } from '../services/analyticsEventService';
@@ -39,10 +38,19 @@ export default function HomeScreen() {
   // If the authorized administrator opens HomeScreen, immediately redirect to /admin
   useEffect(() => {
     if ((user?.email || '').trim().toLowerCase() === 'sham111205s@gmail.com') {
-      if (typeof window !== 'undefined' && window.location) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
         window.location.href = '/admin';
       } else {
         navigation.replace('Admin');
+      }
+    } else if (user) {
+      const isComplete = Boolean(user.profileCompleted === true || (user.age && user.gender));
+      if (!isComplete) {
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+          window.location.href = '/complete-profile';
+        } else {
+          navigation.navigate('CompleteProfile');
+        }
       }
     }
   }, [user, navigation]);
@@ -67,23 +75,63 @@ export default function HomeScreen() {
 
   // 1. Fetch active deficiencies
   useEffect(() => {
-    if (isFirebaseConfigured) {
-      const targetUid = user?.uid || user?.id || auth?.currentUser?.uid;
-      if (!targetUid) return;
-      const path = `users/${targetUid}/deficiencies`;
-      const q = query(collection(db, path), where('resolved', '==', false));
-      const unsubscribe = onSnapshot(q, (snap) => {
-        const list = [];
-        snap.forEach(doc => list.push(doc.data()));
-        setDeficiencies(list);
-      });
-      return () => unsubscribe();
-    } else {
-      // Mock deficiency warning
-      setDeficiencies([
-        { id: 'mock-def-1', nutrient: 'iron', averageIntake: 6.2, requiredRda: 18.0, severity: 'CRITICAL', resolved: false }
-      ]);
+    let isMounted = true;
+    let unsubscribeFs = null;
+
+    async function loadDeficiencies() {
+      if (isSupabaseConfigured) {
+        try {
+          const client = getSupabaseClient();
+          if (!client) {
+            if (isMounted) setDeficiencies([]);
+            return;
+          }
+          // Ensure authenticated user UUID comes strictly from verified Supabase session
+          const { data: sessionData } = await client.auth.getSession();
+          const verifiedUserId = sessionData?.session?.user?.id;
+          if (!verifiedUserId) {
+            if (isMounted) setDeficiencies([]);
+            return;
+          }
+
+          const { data, error } = await client
+            .from('user_deficiencies')
+            .select('*')
+            .eq('user_id', verifiedUserId)
+            .eq('status', 'active');
+
+          if (isMounted) {
+            if (!error && Array.isArray(data)) {
+              const mapped = data.map(d => ({
+                id: d.id,
+                nutrient: d.nutrient_name || d.nutrient,
+                averageIntake: d.detected_level || d.averageIntake,
+                requiredRda: d.target_level || d.requiredRda,
+                severity: (d.severity || 'moderate').toUpperCase(),
+                resolved: d.status === 'resolved' || d.resolved === true
+              }));
+              setDeficiencies(mapped);
+            } else {
+              setDeficiencies([]);
+            }
+          }
+        } catch (err) {
+          console.warn('Supabase deficiencies load notice:', err.message);
+          if (isMounted) setDeficiencies([]);
+        }
+      } else {
+        if (isMounted) setDeficiencies([]);
+      }
     }
+
+    loadDeficiencies();
+
+    return () => {
+      isMounted = false;
+      if (typeof unsubscribeFs === 'function') {
+        unsubscribeFs();
+      }
+    };
   }, [user?.uid, user?.id]);
 
   // 2. Fetch mood-based foods on mood change

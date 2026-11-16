@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, TextInput as RNTextInput } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { User, Mail, Lock, Eye, EyeOff, ChevronDown, Check, X } from 'lucide-react-native';
@@ -31,11 +31,41 @@ export default function SignUpScreen() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  function routeAfterAuth(userData) {
+    const cleanEmail = (userData?.email || '').trim().toLowerCase();
+    const isAdmin = cleanEmail === 'sham111205s@gmail.com';
+    const isProfileComplete = Boolean(
+      userData?.profileCompleted === true ||
+      (userData?.age && userData?.gender)
+    );
+
+    if (typeof window !== 'undefined' && window.location && window.location.pathname !== undefined) {
+      if (isAdmin) {
+        window.location.href = '/admin';
+      } else {
+        window.location.href = isProfileComplete ? '/home' : '/complete-profile';
+      }
+      return;
+    }
+
+    const targetRoute = isAdmin ? 'Admin' : (isProfileComplete ? 'Home' : 'CompleteProfile');
+    if (navigation && typeof navigation.replace === 'function') {
+      navigation.replace(targetRoute);
+    } else if (navigation && typeof navigation.navigate === 'function') {
+      navigation.navigate(targetRoute);
+    }
+  }
+
   async function handleGoogleSignIn() {
     setLoading(true); setError('');
     try {
       const data = await apiLoginWithGoogle();
-      setUser(data.user);
+      if (data?.user) {
+        setUser(data.user);
+        routeAfterAuth(data.user);
+      } else if (data?.url && typeof window !== 'undefined' && window.location) {
+        window.location.href = data.url;
+      }
     } catch (err) {
       setError(err.message || 'Google Sign In failed. Please try again.');
     } finally {
@@ -56,11 +86,27 @@ export default function SignUpScreen() {
     }));
   }
 
+  const isSubmittingRef = useRef(false);
+
   async function handleCreate() {
-    if (!form.name || !form.email || !form.password || !form.gender || !form.age) {
+    if (isSubmittingRef.current || loading) return;
+
+    const trimmedName = (form.name || '').trim();
+    const trimmedEmail = (form.email || '').trim().toLowerCase();
+    const trimmedAge = (form.age || '').toString().trim();
+    const trimmedGender = (form.gender || '').trim();
+
+    if (!trimmedName || !trimmedEmail || !form.password || !trimmedGender || !trimmedAge) {
       setError('Please fill all required fields.');
       return;
     }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+
     if (form.password !== form.confirm) {
       setError('Passwords do not match.');
       return;
@@ -70,6 +116,7 @@ export default function SignUpScreen() {
       return;
     }
 
+    isSubmittingRef.current = true;
     setLoading(true);
     setError('');
 
@@ -89,36 +136,30 @@ export default function SignUpScreen() {
 
     try {
       const data = await apiRegister({ 
-        name: form.name, 
-        email: form.email, 
+        name: trimmedName, 
+        email: trimmedEmail, 
         password: form.password, 
         dietType, 
         preferences,
-        age: parseInt(form.age) || '',
-        gender: form.gender || ''
+        age: parseInt(trimmedAge, 10) || '',
+        gender: trimmedGender
       });
+
+      if (data?.requiresVerification) {
+        navigation.navigate('SignIn', {
+          verificationNotice: `Verification email sent to ${trimmedEmail}! Please check your inbox (and spam folder) to verify your account before signing in.`,
+          prefillEmail: trimmedEmail,
+        });
+        return;
+      }
+
       setUser({ ...data.user, preferences: { ...(data.user?.preferences || {}), ...preferences } });
       setPreferences(preferences);
       apiSendWelcomeEmail().catch(e => console.warn('Welcome email dispatch skipped:', e.message));
     } catch (err) {
-      if (!isBackendOfflineError(err)) {
-        setError(err.message || 'Registration failed. Please try again.');
-        setLoading(false);
-        return;
-      }
-
-      const mockUser = {
-        id: `local-${Date.now()}`,
-        name: form.name,
-        email: form.email,
-        age: form.age,
-        gender: form.gender,
-        preferences,
-        isLocalOnly: true,
-      };
-      setUser(mockUser);
-      setPreferences(preferences);
+      setError(err.message || 'Registration failed. Please try again.');
     } finally {
+      isSubmittingRef.current = false;
       setLoading(false);
     }
   }

@@ -1,74 +1,201 @@
 // ─────────────────────────────────────────────────────────────
 //  src/services/api.js
-//  Direct Firebase SDK Auth & Database Adapter
-//  Provides LocalStorage Mock engine fallback if config is missing
+//  FoodieBite Supabase & Local Engine API Service Hub
+//  Zero Firebase & Zero Cloud AI dependencies
 // ─────────────────────────────────────────────────────────────
 
+let Platform = { OS: 'web' };
+try {
+  Platform = require('react-native').Platform || Platform;
+} catch (_) {}
+import { processLocalAiMessage } from './localAiCoach.js';
+
+// Firebase compatibility stubs (Firebase is completely decommissioned)
+export const isFirebaseConfigured = false;
+export const auth = null;
+export const db = null;
+export const signInWithEmailAndPassword = null;
+export const createUserWithEmailAndPassword = null;
+export const fbUpdatePassword = null;
+export const fbUpdateProfile = null;
+export const sendPasswordResetEmail = null;
+export const sendEmailVerification = null;
+export const doc = null;
+export const getDoc = null;
+export const setDoc = null;
+export const updateDoc = null;
+export const collection = null;
+export const getDocs = null;
+export const deleteDoc = null;
+export const arrayUnion = null;
+export const arrayRemove = null;
+import { loginWithGoogle } from './googleAuth.js';
 import {
-  auth,
-  db,
-  isFirebaseConfigured,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  updatePassword as fbUpdatePassword,
-  updateProfile as fbUpdateProfile,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signInWithCredential,
-  sendPasswordResetEmail,
-  sendEmailVerification,
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  collection,
-  getDocs,
-  deleteDoc,
-  arrayUnion,
-  arrayRemove,
-} from './firebase';
-import { loginWithGoogle } from './googleAuth';
+  registerWithEmail as supabaseRegisterWithEmail,
+  loginWithEmail as supabaseLoginWithEmail,
+  logout as supabaseLogout,
+  resetPassword as supabaseResetPassword,
+  updatePassword as supabaseUpdatePassword,
+  resendVerificationEmail as supabaseResendVerificationEmail,
+  getCurrentUser as supabaseGetCurrentUser,
+  getCurrentSession as supabaseGetCurrentSession,
+  isValidEmail as isEmailValid,
+} from './supabaseAuthService.js';
+import {
+  getMyProfile as supabaseGetMyProfile,
+  getProfileById as supabaseGetProfileById,
+  updateProfile as supabaseUpdateProfileData,
+} from './supabaseProfileService.js';
+import { isSupabaseConfigured } from '../config/supabaseClient.js';
 import {
   getRecommendations as getClientRecommendations,
   searchByQuery as searchClientFoods,
   getProductById as getClientFoodByBarcode,
   normaliseProduct
-} from './openFoodFacts';
-import { trackScannedFood } from './localStorageService';
+} from './openFoodFacts.js';
+import { trackScannedFood, clearSession } from './localStorageService.js';
+import storage, { getItemSync, setItemSync, removeItemSync, getJSONSync } from './storage.js';
 
 // ── LOCAL STORAGE ENGINE FALLBACK ─────────────────────────────
 const MOCK_DELAY = 150; // Milliseconds to simulate network request
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function getLocalUsers() {
-  const data = localStorage.getItem('nb_mock_users');
-  return data ? JSON.parse(data) : {};
+  return getJSONSync('nb_mock_users', {});
 }
 
 function saveLocalUsers(users) {
-  localStorage.setItem('nb_mock_users', JSON.stringify(users));
+  setItemSync('nb_mock_users', JSON.stringify(users));
 }
 
 export function getLocalActiveUser() {
-  const data = localStorage.getItem('nb_mock_active');
-  return data ? JSON.parse(data) : null;
+  try {
+    return getJSONSync('nb_mock_active', null);
+  } catch (err) {
+    console.warn('Error reading local active user:', err.message);
+    return null;
+  }
 }
 
-function saveLocalActiveUser(user) {
-  if (user) {
-    localStorage.setItem('nb_mock_active', JSON.stringify(user));
-  } else {
-    localStorage.removeItem('nb_mock_active');
+/**
+ * Saves and synchronizes the locally stored active user profile in 'nb_mock_active'.
+ * 
+ * - Stores authenticated Supabase user profile information.
+ * - Preserves existing local active-user data structure (id, uid, name, email, role, etc.).
+ * - Preserves existing preferences, favorites, and search history if not provided in the new payload.
+ * - Strictly strips passwords, access tokens, refresh tokens, and sensitive authentication credentials.
+ * - Updates the local user dictionary ('nb_mock_users') for offline resilience and Admin visibility.
+ * - Safely handles null, undefined, or malformed user inputs.
+ * 
+ * @param {object|null} user The user object to persist, or null to clear the active session.
+ * @returns {object|null} The sanitized, persisted user object, or null if cleared/invalid.
+ */
+export function saveLocalActiveUser(user) {
+  // Handle explicit logout or clear
+  if (!user) {
+    try {
+      removeItemSync('nb_mock_active');
+    } catch (_) { }
+    return null;
+  }
+
+  // Handle non-object invalid inputs safely
+  if (typeof user !== 'object') {
+    return null;
+  }
+
+  try {
+    const existing = getLocalActiveUser();
+    const isSameUser = Boolean(
+      existing && (
+        (user.id && existing.id === user.id) ||
+        (user.uid && existing.uid === user.uid) ||
+        (user.email && existing.email && user.email.toLowerCase() === existing.email.toLowerCase())
+      )
+    );
+
+    const cleanEmail = (user.email || (isSameUser ? existing.email : '') || '').trim().toLowerCase();
+    const userId = user.id || user.uid || (isSameUser ? (existing.id || existing.uid) : null);
+
+    // Merge preferences without overwriting custom existing settings with defaults or empties
+    let mergedPreferences = { ...(user.preferences || {}) };
+    if (isSameUser && existing.preferences) {
+      mergedPreferences = {
+        ...existing.preferences,
+        ...user.preferences,
+      };
+    }
+
+    // Preserve favorites if not provided in user payload
+    let mergedFavorites = Array.isArray(user.favoriteFoods) && user.favoriteFoods.length > 0
+      ? user.favoriteFoods
+      : (isSameUser && Array.isArray(existing.favoriteFoods) ? existing.favoriteFoods : []);
+
+    // Preserve search history if not provided in user payload
+    let mergedSearchHistory = Array.isArray(user.searchHistory) && user.searchHistory.length > 0
+      ? user.searchHistory
+      : (isSameUser && Array.isArray(existing.searchHistory) ? existing.searchHistory : []);
+
+    // Assemble comprehensive user object adhering to FoodieBite schema
+    const sanitizedUser = {
+      ...(isSameUser ? existing : {}),
+      ...user,
+      id: userId,
+      uid: userId,
+      email: cleanEmail,
+      name: user.name || (isSameUser ? existing.name : '') || (cleanEmail ? cleanEmail.split('@')[0] : 'FoodieBite User'),
+      role: user.role || (cleanEmail === 'sham111205s@gmail.com' ? 'admin' : (isSameUser ? existing.role : 'user')) || 'user',
+      accountStatus: user.accountStatus || (user.disabled ? 'disabled' : (isSameUser ? existing.accountStatus : 'active')) || 'active',
+      disabled: typeof user.disabled === 'boolean' ? user.disabled : (isSameUser ? Boolean(existing.disabled) : false),
+      dietType: user.dietType || mergedPreferences.dietType || (isSameUser ? existing.dietType : 'Vegetarian') || 'Vegetarian',
+      age: user.age !== undefined ? user.age : (isSameUser ? existing.age : ''),
+      gender: user.gender !== undefined ? user.gender : (isSameUser ? existing.gender : ''),
+      preferences: mergedPreferences,
+      favoriteFoods: mergedFavorites,
+      searchHistory: mergedSearchHistory,
+      lastSignInTime: user.lastSignInTime || user.lastLoginAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Explicitly delete sensitive credentials and tokens
+    delete sanitizedUser.password;
+    delete sanitizedUser.passwordHash;
+    delete sanitizedUser.access_token;
+    delete sanitizedUser.token;
+    delete sanitizedUser.refreshToken;
+    delete sanitizedUser.refresh_token;
+    delete sanitizedUser.jwt;
+    delete sanitizedUser.secret;
+    delete sanitizedUser.apiKey;
+
+    // Persist to nb_mock_active
+    setItemSync('nb_mock_active', JSON.stringify(sanitizedUser));
+
+    // Also sync to local users store for lookup
+    if (cleanEmail) {
+      try {
+        const users = getLocalUsers();
+        users[cleanEmail] = {
+          ...(users[cleanEmail] || {}),
+          ...sanitizedUser,
+        };
+        saveLocalUsers(users);
+      } catch (_) { }
+    }
+
+    return sanitizedUser;
+  } catch (err) {
+    console.warn('Error saving local active user:', err.message);
+    return null;
   }
 }
 
 // ═════════════════════════════════════════════════════════════
 //  TOKEN HELPERS (Stubs for direct SDK architecture)
 // ═════════════════════════════════════════════════════════════
-export const getToken = () => localStorage.getItem('nb_token');
-export const setToken = (token) => localStorage.setItem('nb_token', token);
-export const clearToken = () => localStorage.removeItem('nb_token');
+export const getToken = () => getItemSync('nb_token');
+export const setToken = (token) => setItemSync('nb_token', token);
+export const clearToken = () => removeItemSync('nb_token');
 
 // ═════════════════════════════════════════════════════════════
 //  AUTHENTICATION & USER SYNCHRONIZATION
@@ -120,7 +247,7 @@ export async function apiSyncUser(userData) {
       ...syncPayload
     };
     saveLocalUsers(users);
-  } catch (e) {}
+  } catch (e) { }
 
   // 3. If Firebase Auth is active, merge into Firestore user profile document
   if (isFirebaseConfigured && auth && auth.currentUser && auth.currentUser.uid === syncPayload.id) {
@@ -146,14 +273,101 @@ export async function apiSyncUser(userData) {
 }
 
 export async function apiRegister({ name, email, password, dietType, preferences = {}, age, gender }) {
+  const cleanEmail = (email || '').trim().toLowerCase();
+
+  if (!cleanEmail || !password) {
+    throw new Error('Email and password are required.');
+  }
+
+  if (!isEmailValid(cleanEmail)) {
+    throw new Error('Please enter a valid email address.');
+  }
+
+  if (password.length < 6) {
+    throw new Error('Password must be at least 6 characters.');
+  }
+
+  if (isSupabaseConfigured) {
+    const res = await supabaseRegisterWithEmail({
+      email: cleanEmail,
+      password,
+      fullName: name,
+      dietType: dietType || 'Vegetarian',
+      age: age || null,
+      gender: gender || null,
+      preferences,
+    });
+
+    if (!res.success) {
+      throw new Error(res.error || 'Registration failed');
+    }
+
+    if (res.requiresVerification) {
+      return {
+        success: true,
+        requiresVerification: true,
+        message: 'Account registered successfully! Please check your email to verify your account before logging in.',
+        user: {
+          id: res.user?.id,
+          uid: res.user?.id,
+          name,
+          email: cleanEmail,
+          requiresVerification: true,
+          preferences: {
+            dietType: dietType || 'Vegetarian',
+            ...preferences,
+          },
+        },
+      };
+    }
+
+    const token = res.session?.access_token || '';
+    if (token) setToken(token);
+
+    const userData = {
+      id: res.user.id,
+      uid: res.user.id,
+      name: res.profile?.name || name,
+      email: (res.user.email || email).toLowerCase(),
+      dietType: res.profile?.diet_type || dietType || 'Vegetarian',
+      age: res.profile?.age || age || '',
+      gender: res.profile?.gender || gender || '',
+      role: res.profile?.role || ((email || '').toLowerCase() === 'sham111205s@gmail.com' ? 'admin' : 'user'),
+      accountStatus: res.profile?.account_status || 'active',
+      disabled: res.profile?.disabled || false,
+      preferences: res.profile?.preferences || {
+        dietType: dietType || 'Vegetarian',
+        spiceLevel: 'Medium',
+        cuisines: ['indian'],
+        healthGoals: ['healthy_eating'],
+        country: 'in',
+        allergies: [],
+        minGrade: 'c',
+        emailNotifications: true,
+        ...preferences,
+      },
+      notificationSettings: res.profile?.notification_settings || {
+        dailySuggestions: true,
+        loginAlerts: true,
+        marketingEmails: false,
+      },
+      createdAt: res.profile?.created_at || new Date().toISOString(),
+      lastSignInTime: res.profile?.last_login_at || new Date().toISOString(),
+      authProvider: 'email',
+    };
+
+    saveLocalActiveUser(userData);
+    return { success: true, token, user: userData };
+  }
+
   if (isFirebaseConfigured) {
     // 1. Create Firebase Auth user
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const user = cred.user;
-    
+
     // Update Auth Profile DisplayName
     await fbUpdateProfile(user, { displayName: name });
-    
+
     const token = await user.getIdToken();
     setToken(token);
 
@@ -206,78 +420,105 @@ export async function apiRegister({ name, email, password, dietType, preferences
 
     return { success: true, token, user: userData };
   } else {
-    await sleep(MOCK_DELAY);
-    const users = getLocalUsers();
-    const cleanEmail = email.toLowerCase();
-    
-    if (users[cleanEmail]) {
-      throw new Error('Email already registered');
-    }
-
-    const initialPrefs = {
-      dietType: dietType || 'Vegetarian',
-      spiceLevel: 'Medium',
-      cuisines: ['indian'],
-      healthGoals: ['healthy_eating'],
-      country: 'in',
-      allergies: [],
-      maxCalories: null,
-      minProtein: null,
-      minGrade: 'c',
-      emailNotifications: true,
-      dailyRecommendationEmails: true,
-      ...preferences
-    };
-
-    const mockUid = `mock-${Date.now()}`;
-    const now = new Date().toISOString();
-    const userData = {
-      id: mockUid,
-      uid: mockUid,
-      name,
-      email: cleanEmail,
-      photoURL: '',
-      password, // for mock sign-in verification
-      age: age || '',
-      gender: gender || '',
-      dietType: dietType || 'Vegetarian',
-      welcomeEmailSent: false,
-      authProvider: 'password',
-      accountStatus: 'active',
-      createdAt: now,
-      lastSignInTime: now,
-      lastLoginAt: now,
-      notificationSettings: {
-        dailySuggestions: true,
-        loginAlerts: true,
-        marketingEmails: false
-      },
-      preferences: initialPrefs,
-      favoriteFoods: [],
-      searchHistory: [],
-      role: cleanEmail === 'sham111205s@gmail.com' ? 'admin' : 'user',
-      isMock: true
-    };
-
-    users[cleanEmail] = userData;
-    saveLocalUsers(users);
-    saveLocalActiveUser(userData);
-    setToken(`mock-token-${mockUid}`);
-
-    // Synchronize to backend user store (triggers welcome email for new account)
-    await apiSyncUser({ ...userData, isNewRegistration: true });
-
-    return { success: true, token: `mock-token-${mockUid}`, user: userData };
+    throw new Error('Registration failed: Authentication service is not configured.');
   }
 }
 
 export async function apiLogin({ email, password }) {
   const cleanEmail = (email || '').trim().toLowerCase();
+
+  if (!cleanEmail || !password) {
+    throw new Error('Please enter both email and password.');
+  }
+
+  if (isSupabaseConfigured) {
+    const res = await supabaseLoginWithEmail({ email: cleanEmail, password });
+
+    if (!res.success) {
+      const errMsg = res.error || '';
+      if (res.isUnverified || /email not confirmed|email_not_confirmed|not been verified/i.test(errMsg)) {
+        const unverifiedErr = new Error(errMsg || 'Your email address has not been verified. Please check your inbox (and spam folder) for the verification link.');
+        unverifiedErr.isUnverified = true;
+        unverifiedErr.email = cleanEmail;
+        throw unverifiedErr;
+      }
+      if (/invalid login credentials|invalid credentials/i.test(errMsg)) {
+        throw new Error('Incorrect email or password. Please try again.');
+      }
+      throw new Error(errMsg || 'Sign in failed');
+    }
+
+    const token = res.session?.access_token || '';
+    if (token) setToken(token);
+
+    // Profile from trigger
+    let profile = res.profile;
+    if (!profile && res.user?.id) {
+      const pRes = await supabaseGetMyProfile();
+      if (pRes?.success && pRes.profile) {
+        profile = pRes.profile;
+      }
+    }
+
+    // Verify account disabled status
+    if (profile && (profile.disabled === true || profile.account_status === 'disabled')) {
+      await supabaseLogout();
+      clearToken();
+      clearSession();
+      throw new Error('Your account has been disabled. Please contact support.');
+    }
+
+    const AUTHORIZED_ADMIN = 'sham111205s@gmail.com';
+    const finalRole = profile?.role || (cleanEmail === AUTHORIZED_ADMIN ? 'admin' : 'user');
+
+    const userData = {
+      id: res.user.id,
+      uid: res.user.id,
+      name: profile?.name || res.user.user_metadata?.full_name || cleanEmail.split('@')[0],
+      email: cleanEmail,
+      role: finalRole,
+      dietType: profile?.diet_type || 'Vegetarian',
+      age: profile?.age || '',
+      gender: profile?.gender || '',
+      accountStatus: profile?.account_status || 'active',
+      disabled: profile?.disabled || false,
+      preferences: profile?.preferences || {
+        dietType: 'Vegetarian',
+        spiceLevel: 'Medium',
+        cuisines: ['indian'],
+        healthGoals: ['healthy_eating'],
+        country: 'in',
+        allergies: [],
+        minGrade: 'c',
+        emailNotifications: true,
+      },
+      notificationSettings: profile?.notification_settings || {
+        dailySuggestions: true,
+        loginAlerts: true,
+        marketingEmails: false,
+      },
+      favoriteFoods: [],
+      searchHistory: [],
+      createdAt: profile?.created_at || new Date().toISOString(),
+      lastSignInTime: profile?.last_login_at || new Date().toISOString(),
+      authProvider: 'email',
+    };
+
+    saveLocalActiveUser(userData);
+
+    if (cleanEmail === AUTHORIZED_ADMIN) {
+      const sessionPayload = { success: true, token, user: userData };
+      setItemSync('foodiebite_admin_session', JSON.stringify(sessionPayload));
+    }
+
+    return { success: true, token, user: userData };
+  }
+
   if (isFirebaseConfigured) {
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
       const user = cred.user;
-      
+
       const token = await user.getIdToken();
       setToken(token);
 
@@ -320,7 +561,7 @@ export async function apiLogin({ email, password }) {
           minGrade: 'c',
           emailNotifications: true,
         };
-        
+
         userData = {
           id: user.uid,
           uid: user.uid,
@@ -343,8 +584,7 @@ export async function apiLogin({ email, password }) {
 
       if (cleanEmail === 'sham111205s@gmail.com') {
         const sessionPayload = { success: true, token, user: userData };
-        if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('foodiebite_admin_session', JSON.stringify(sessionPayload));
-        if (typeof localStorage !== 'undefined') localStorage.setItem('foodiebite_admin_session', JSON.stringify(sessionPayload));
+        setItemSync('foodiebite_admin_session', JSON.stringify(sessionPayload));
       }
 
       // Synchronize to backend user store for admin visibility
@@ -365,8 +605,7 @@ export async function apiLogin({ email, password }) {
           saveLocalActiveUser(backendData.user);
           if (cleanEmail === 'sham111205s@gmail.com') {
             const sessionPayload = { success: true, token: backendData.token, user: backendData.user };
-            if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('foodiebite_admin_session', JSON.stringify(sessionPayload));
-            if (typeof localStorage !== 'undefined') localStorage.setItem('foodiebite_admin_session', JSON.stringify(sessionPayload));
+            setItemSync('foodiebite_admin_session', JSON.stringify(sessionPayload));
           }
           return { success: true, token: backendData.token, user: backendData.user };
         } else if (backendData && backendData.message) {
@@ -380,34 +619,61 @@ export async function apiLogin({ email, password }) {
       throw fbErr;
     }
   } else {
-    await sleep(MOCK_DELAY);
-    const users = getLocalUsers();
-    const cleanEmail = email.toLowerCase();
-    const user = users[cleanEmail];
-
-    if (!user || user.password !== password) {
-      throw new Error('Invalid email or password');
-    }
-
-    const now = new Date().toISOString();
-    user.lastSignInTime = now;
-    user.lastLoginAt = now;
-    user.authProvider = user.authProvider || 'password';
-    user.accountStatus = user.accountStatus || 'active';
-
-    saveLocalActiveUser(user);
-    users[cleanEmail] = user;
-    saveLocalUsers(users);
-    setToken(`mock-token-${user.id}`);
-
-    // Synchronize with backend user store
-    await apiSyncUser(user);
-
-    return { success: true, token: `mock-token-${user.id}`, user };
+    throw new Error('Authentication failed: Authentication service is not configured.');
   }
 }
 
 export async function apiGetMe() {
+  if (isSupabaseConfigured) {
+    const sessionRes = await supabaseGetCurrentSession();
+    if (sessionRes?.session?.user) {
+      const u = sessionRes.session.user;
+      const token = sessionRes.session.access_token;
+      setToken(token);
+
+      const pRes = await supabaseGetMyProfile();
+      const profile = pRes?.profile;
+      const cleanEmail = (u.email || '').trim().toLowerCase();
+      const AUTHORIZED_ADMIN = 'sham111205s@gmail.com';
+
+      const userData = {
+        id: u.id,
+        uid: u.id,
+        name: profile?.name || u.user_metadata?.full_name || (cleanEmail ? cleanEmail.split('@')[0] : 'User'),
+        email: cleanEmail,
+        role: profile?.role || (cleanEmail === AUTHORIZED_ADMIN ? 'admin' : 'user'),
+        dietType: profile?.diet_type || 'Vegetarian',
+        age: profile?.age || '',
+        gender: profile?.gender || '',
+        accountStatus: profile?.account_status || 'active',
+        disabled: profile?.disabled || false,
+        preferences: profile?.preferences || {
+          dietType: 'Vegetarian',
+          spiceLevel: 'Medium',
+          cuisines: ['indian'],
+          healthGoals: ['healthy_eating'],
+          country: 'in',
+          allergies: [],
+          minGrade: 'c',
+          emailNotifications: true,
+        },
+        notificationSettings: profile?.notification_settings || {
+          dailySuggestions: true,
+          loginAlerts: true,
+          marketingEmails: false,
+        },
+        favoriteFoods: [],
+        searchHistory: [],
+        createdAt: profile?.created_at || new Date().toISOString(),
+        lastSignInTime: profile?.last_login_at || new Date().toISOString(),
+        authProvider: 'email',
+      };
+
+      saveLocalActiveUser(userData);
+      return { success: true, user: userData };
+    }
+  }
+
   if (isFirebaseConfigured) {
     const user = auth.currentUser;
     if (!user) {
@@ -421,7 +687,7 @@ export async function apiGetMe() {
             const data = await res.json();
             if (data.success && data.user) return data;
           }
-        } catch (_) {}
+        } catch (_) { }
       }
       const adminSession = getAdminSession();
       if (adminSession?.user) {
@@ -483,19 +749,27 @@ export async function apiGetMe() {
     }
 
     // Ensure synchronized with backend user store
-    apiSyncUser(userData).catch(() => {});
+    apiSyncUser(userData).catch(() => { });
 
     return { success: true, user: userData };
   } else {
     await sleep(50);
     const active = getLocalActiveUser();
     if (!active) throw new Error('Not authenticated');
-    apiSyncUser(active).catch(() => {});
+    apiSyncUser(active).catch(() => { });
     return { success: true, user: active };
   }
 }
 
 export async function apiUpdatePassword({ currentPassword, newPassword }) {
+  if (isSupabaseConfigured) {
+    const res = await supabaseUpdatePassword(newPassword);
+    if (!res.success) {
+      throw new Error(res.error || 'Failed to update password');
+    }
+    return { success: true, message: 'Password updated successfully' };
+  }
+
   if (isFirebaseConfigured) {
     const user = auth.currentUser;
     if (!user) throw new Error('No authenticated user found');
@@ -505,7 +779,7 @@ export async function apiUpdatePassword({ currentPassword, newPassword }) {
     await sleep(MOCK_DELAY);
     const active = getLocalActiveUser();
     if (!active) throw new Error('Not authenticated');
-    
+
     const users = getLocalUsers();
     if (users[active.email].password !== currentPassword) {
       throw new Error('Current password is incorrect');
@@ -523,26 +797,42 @@ export async function apiLogout() {
   clearToken();
   clearAdminSession();
   saveLocalActiveUser(null);
-  if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem('nb_token');
-    localStorage.removeItem('nb_active_session');
-    localStorage.removeItem('nb_mock_active');
-    localStorage.removeItem('foodiebite_admin_session');
-  }
-  if (typeof sessionStorage !== 'undefined') {
-    sessionStorage.removeItem('foodiebite_admin_session');
-    sessionStorage.removeItem('foodiebite_redirect_after_login');
-  }
-  if (isFirebaseConfigured && auth) {
+  removeItemSync('nb_token');
+  removeItemSync('nb_active_session');
+  removeItemSync('nb_mock_active');
+  removeItemSync('foodiebite_admin_session');
+  removeItemSync('foodiebite_redirect_after_login');
+
+  if (isSupabaseConfigured) {
     try {
-      await signOut(auth);
+      await supabaseLogout();
     } catch (err) {
-      console.error('Signout failed', err);
+      console.warn('Supabase signout note:', err.message);
     }
   }
 }
 
 export async function apiUpdateProfile({ name, email, age, gender }) {
+  if (isSupabaseConfigured) {
+    const updatePayload = {};
+    if (name) {
+      updatePayload.name = name.trim();
+      updatePayload.full_name = name.trim();
+    }
+    if (age !== undefined && age !== '') {
+      updatePayload.age = parseInt(age, 10) || null;
+    }
+    if (gender !== undefined) {
+      updatePayload.gender = gender;
+    }
+    const res = await supabaseUpdateProfileData(updatePayload);
+    if (!res.success) {
+      throw new Error(res.error || 'Failed to update profile');
+    }
+    saveLocalActiveUser(res.profile);
+    return { success: true, user: res.profile };
+  }
+
   if (isFirebaseConfigured) {
     const user = auth.currentUser;
     if (!user) throw new Error('No authenticated user');
@@ -550,9 +840,9 @@ export async function apiUpdateProfile({ name, email, age, gender }) {
     await fbUpdateProfile(user, { displayName: name });
     const userDocRef = doc(db, 'users', user.uid);
     const updateData = { name, email, age: age || '', gender: gender || '' };
-    
+
     await updateDoc(userDocRef, updateData);
-    
+
     // Retrieve latest complete user record
     const latest = await getDoc(userDocRef);
     return { success: true, user: latest.data() };
@@ -562,7 +852,7 @@ export async function apiUpdateProfile({ name, email, age, gender }) {
     if (!active) throw new Error('Not authenticated');
 
     const users = getLocalUsers();
-    
+
     // Update credentials
     delete users[active.email];
     const updated = {
@@ -585,9 +875,17 @@ export async function apiUpdateProfile({ name, email, age, gender }) {
 // ═════════════════════════════════════════════════════════════
 
 export async function apiGetPreferences() {
-  if (isFirebaseConfigured) {
+  if (isSupabaseConfigured) {
+    const pRes = await supabaseGetMyProfile();
+    if (pRes?.success && pRes.profile?.preferences) {
+      return { success: true, preferences: pRes.profile.preferences };
+    }
+    const active = getLocalActiveUser();
+    return { success: true, preferences: active?.preferences || {} };
+  }
+
+  if (isFirebaseConfigured && auth && auth.currentUser) {
     const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
     const userSnap = await getDoc(doc(db, 'users', user.uid));
     return { success: true, preferences: userSnap.data()?.preferences || {} };
   } else {
@@ -598,10 +896,37 @@ export async function apiGetPreferences() {
 }
 
 export async function apiUpdatePreferences(preferences) {
-  if (isFirebaseConfigured) {
+  if (isSupabaseConfigured) {
+    const active = getLocalActiveUser();
+    const existingPrefs = active?.preferences || {};
+    const merged = { ...existingPrefs, ...preferences };
+
+    await supabaseUpdateProfileData({
+      preferences: merged,
+      diet_type: merged.dietType || active?.dietType || 'Vegetarian',
+    }).catch(() => { });
+
+    if (active) {
+      const updatedUser = { ...active, preferences: merged, dietType: merged.dietType || active.dietType };
+      saveLocalActiveUser(updatedUser);
+      const users = getLocalUsers();
+      if (active.email) {
+        users[active.email] = updatedUser;
+        saveLocalUsers(users);
+      }
+    }
+
+    if (isFirebaseConfigured && auth && auth.currentUser) {
+      try {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), { preferences: merged });
+      } catch (_) { }
+    }
+
+    return { success: true, preferences: merged };
+  }
+
+  if (isFirebaseConfigured && auth && auth.currentUser) {
     const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
-    
     const userDocRef = doc(db, 'users', user.uid);
     const snap = await getDoc(userDocRef);
     const existingPrefs = snap.exists() ? (snap.data().preferences || {}) : {};
@@ -618,8 +943,10 @@ export async function apiUpdatePreferences(preferences) {
     saveLocalActiveUser(updatedUser);
 
     const users = getLocalUsers();
-    users[active.email] = updatedUser;
-    saveLocalUsers(users);
+    if (active.email) {
+      users[active.email] = updatedUser;
+      saveLocalUsers(users);
+    }
 
     return { success: true, preferences: merged };
   }
@@ -630,76 +957,84 @@ export async function apiUpdatePreferences(preferences) {
 // ═════════════════════════════════════════════════════════════
 
 export async function apiGetFavorites() {
-  if (isFirebaseConfigured) {
-    const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
-    
-    const userSnap = await getDoc(doc(db, 'users', user.uid));
-    const favoriteFoods = userSnap.exists() ? (userSnap.data().favoriteFoods || []) : [];
-    return { success: true, favoriteFoods };
-  } else {
-    const active = getLocalActiveUser();
-    if (!active) throw new Error('Not authenticated');
+  const active = getLocalActiveUser();
+
+  if (isFirebaseConfigured && auth && auth.currentUser) {
+    try {
+      const userSnap = await getDoc(doc(db, 'users', auth.currentUser.uid));
+      const favoriteFoods = userSnap.exists() ? (userSnap.data().favoriteFoods || []) : [];
+      if (active) {
+        active.favoriteFoods = favoriteFoods;
+        saveLocalActiveUser(active);
+      }
+      return { success: true, favoriteFoods };
+    } catch (_) { }
+  }
+
+  if (active) {
     return { success: true, favoriteFoods: active.favoriteFoods || [] };
   }
+  return { success: true, favoriteFoods: [] };
 }
 
 export async function apiAddFavoriteFood(food) {
   const cleanFoodId = food.foodId || food.id;
   const foodData = { ...food, foodId: cleanFoodId, id: cleanFoodId };
-  if (isFirebaseConfigured) {
-    const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
-    
-    await updateDoc(doc(db, 'users', user.uid), {
-      favoriteFoods: arrayUnion(foodData)
-    });
-    return { success: true, message: 'Added to favorites' };
-  } else {
-    const active = getLocalActiveUser();
-    if (!active) throw new Error('Not authenticated');
+  const active = getLocalActiveUser();
 
+  if (active) {
     const favorites = active.favoriteFoods || [];
-    if (!favorites.some(f => f.foodId === cleanFoodId)) {
+    if (!favorites.some(f => (f.foodId || f.id) === cleanFoodId)) {
       const updatedFavs = [...favorites, foodData];
       const updatedUser = { ...active, favoriteFoods: updatedFavs };
-      
       saveLocalActiveUser(updatedUser);
       const users = getLocalUsers();
-      users[active.email] = updatedUser;
-      saveLocalUsers(users);
+      if (active.email) {
+        users[active.email] = updatedUser;
+        saveLocalUsers(users);
+      }
     }
-    return { success: true, message: 'Added to favorites' };
   }
+
+  if (isFirebaseConfigured && auth && auth.currentUser) {
+    try {
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+        favoriteFoods: arrayUnion(foodData)
+      });
+    } catch (_) { }
+  }
+
+  return { success: true, message: 'Added to favorites' };
 }
 
 export async function apiRemoveFavoriteFood(foodId) {
-  if (isFirebaseConfigured) {
-    const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
-    
-    const userDocRef = doc(db, 'users', user.uid);
-    const snap = await getDoc(userDocRef);
-    if (snap.exists()) {
-      const favoriteFoods = snap.data().favoriteFoods || [];
-      const updatedFavs = favoriteFoods.filter(f => f.foodId !== foodId && f.id !== foodId);
-      await updateDoc(userDocRef, { favoriteFoods: updatedFavs });
-    }
-    return { success: true, message: 'Removed from favorites' };
-  } else {
-    const active = getLocalActiveUser();
-    if (!active) throw new Error('Not authenticated');
+  const active = getLocalActiveUser();
 
+  if (active) {
     const favorites = active.favoriteFoods || [];
-    const updatedFavs = favorites.filter(f => f.foodId !== foodId);
+    const updatedFavs = favorites.filter(f => (f.foodId || f.id) !== foodId);
     const updatedUser = { ...active, favoriteFoods: updatedFavs };
-
     saveLocalActiveUser(updatedUser);
     const users = getLocalUsers();
-    users[active.email] = updatedUser;
-    saveLocalUsers(users);
-    return { success: true, message: 'Removed from favorites' };
+    if (active.email) {
+      users[active.email] = updatedUser;
+      saveLocalUsers(users);
+    }
   }
+
+  if (isFirebaseConfigured && auth && auth.currentUser) {
+    try {
+      const userDocRef = doc(db, 'users', auth.currentUser.uid);
+      const snap = await getDoc(userDocRef);
+      if (snap.exists()) {
+        const favoriteFoods = snap.data().favoriteFoods || [];
+        const updatedFavs = favoriteFoods.filter(f => (f.foodId || f.id) !== foodId);
+        await updateDoc(userDocRef, { favoriteFoods: updatedFavs });
+      }
+    } catch (_) { }
+  }
+
+  return { success: true, message: 'Removed from favorites' };
 }
 
 
@@ -713,37 +1048,38 @@ export async function apiRemoveFavoriteFood(foodId) {
 
 
 export async function apiGetSearchHistory() {
-  if (isFirebaseConfigured) {
-    const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
-    const userSnap = await getDoc(doc(db, 'users', user.uid));
-    return { success: true, history: userSnap.data()?.searchHistory || [] };
-  } else {
-    const active = getLocalActiveUser();
-    if (!active) throw new Error('Not authenticated');
-    return { success: true, history: active.searchHistory || [] };
+  const active = getLocalActiveUser();
+  if (isFirebaseConfigured && auth && auth.currentUser) {
+    try {
+      const userSnap = await getDoc(doc(db, 'users', auth.currentUser.uid));
+      if (userSnap.exists()) {
+        return { success: true, history: userSnap.data()?.searchHistory || [] };
+      }
+    } catch (_) { }
   }
+  return { success: true, history: active?.searchHistory || [] };
 }
 
 export async function apiClearSearchHistory() {
-  if (isFirebaseConfigured) {
-    const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
-    
-    const userDocRef = doc(db, 'users', user.uid);
-    await updateDoc(userDocRef, { searchHistory: [] });
-    return { success: true, message: 'History cleared' };
-  } else {
-    const active = getLocalActiveUser();
-    if (!active) throw new Error('Not authenticated');
-
+  const active = getLocalActiveUser();
+  if (active) {
     const updatedUser = { ...active, searchHistory: [] };
     saveLocalActiveUser(updatedUser);
     const users = getLocalUsers();
-    users[active.email] = updatedUser;
-    saveLocalUsers(users);
-    return { success: true, message: 'History cleared' };
+    if (active.email) {
+      users[active.email] = updatedUser;
+      saveLocalUsers(users);
+    }
   }
+
+  if (isFirebaseConfigured && auth && auth.currentUser) {
+    try {
+      const userDocRef = doc(db, 'users', auth.currentUser.uid);
+      await updateDoc(userDocRef, { searchHistory: [] });
+    } catch (_) { }
+  }
+
+  return { success: true, message: 'History cleared' };
 }
 
 // Private helper to save searches to history
@@ -760,11 +1096,11 @@ async function addSearchToHistory(query) {
   if (isFirebaseConfigured) {
     const user = auth.currentUser;
     if (!user) return;
-    
+
     const userDocRef = doc(db, 'users', user.uid);
     const userSnap = await getDoc(userDocRef);
     const history = userSnap.data()?.searchHistory || [];
-    
+
     // Avoid consecutive duplicates
     if (history[0]?.query !== cleanQuery) {
       const updatedHistory = [historyItem, ...history].slice(0, 30); // Cap at 30 items
@@ -807,7 +1143,7 @@ export async function apiGetRecommendations() {
 
   // Hydrate preferences from active user profile if logged in
   try {
-    const activeProfile = isFirebaseConfigured 
+    const activeProfile = isFirebaseConfigured
       ? (auth.currentUser ? (await getDoc(doc(db, 'users', auth.currentUser.uid))).data() : null)
       : getLocalActiveUser();
 
@@ -845,7 +1181,7 @@ export async function apiSearchFoods(query, filter = '') {
   };
 
   try {
-    const activeProfile = isFirebaseConfigured 
+    const activeProfile = isFirebaseConfigured
       ? (auth.currentUser ? (await getDoc(doc(db, 'users', auth.currentUser.uid))).data() : null)
       : getLocalActiveUser();
 
@@ -957,134 +1293,27 @@ export async function apiSendWelcomeEmail() {
 }
 
 export async function apiLoginWithGoogle() {
-  if (isFirebaseConfigured) {
-    const cred = await loginWithGoogle();
-    const user = cred.user;
-    
-    const token = await user.getIdToken();
-    setToken(token);
-    
-    // Fetch user profile from Firestore users/{uid}
-    const userDocRef = doc(db, 'users', user.uid);
-    const userSnap = await getDoc(userDocRef);
-    const now = new Date().toISOString();
-    const lastSignIn = user.metadata?.lastSignInTime || now;
-    
-    let userData;
-    if (userSnap.exists()) {
-      userData = {
-        ...userSnap.data(),
-        id: user.uid,
-        uid: user.uid,
-        authProvider: 'google.com',
-        accountStatus: userSnap.data().disabled ? 'disabled' : 'active',
-        lastSignInTime: lastSignIn,
-        lastLoginAt: lastSignIn
-      };
-      await setDoc(userDocRef, {
-        authProvider: 'google.com',
-        accountStatus: userData.accountStatus,
-        lastSignInTime: lastSignIn,
-        lastLoginAt: lastSignIn,
-        photoURL: user.photoURL || userData.photoURL || ''
-      }, { merge: true });
-    } else {
-      // Create new user profile document
-      const initialPrefs = {
-        dietType: 'Vegetarian',
-        spiceLevel: 'Medium',
-        cuisines: ['indian'],
-        healthGoals: ['healthy_eating'],
-        country: 'in',
-        allergies: [],
-        maxCalories: null,
-        minProtein: null,
-        minGrade: 'c',
-        emailNotifications: true,
-      };
-      
-      userData = {
-        id: user.uid,
-        uid: user.uid,
-        name: user.displayName || 'Google User',
-        email: user.email.toLowerCase(),
-        photoURL: user.photoURL || '',
-        age: '',
-        gender: '',
-        dietType: 'Vegetarian',
-        welcomeEmailSent: false,
-        authProvider: 'google.com',
-        accountStatus: 'active',
-        notificationSettings: {
-          dailySuggestions: true,
-          loginAlerts: true,
-          marketingEmails: false
-        },
-        preferences: initialPrefs,
-        favoriteFoods: [],
-        searchHistory: [],
-        role: user.email.toLowerCase() === 'sham111205s@gmail.com' ? 'admin' : 'user',
-        createdAt: user.metadata?.creationTime || now,
-        lastSignInTime: lastSignIn,
-        lastLoginAt: lastSignIn
-      };
-      await setDoc(userDocRef, userData);
+  if (isSupabaseConfigured) {
+    const res = await loginWithGoogle();
+    if (res?.user && res?.session) {
+      saveLocalActiveUser(res.user);
+      apiSyncUser(res.user).catch(() => { });
     }
-
-    // Synchronize to backend user directory
-    await apiSyncUser(userData);
-
-    return { success: true, token, user: userData };
-  } else {
-    // Mock Google Sign-In fallback
-    await sleep(MOCK_DELAY);
-    const mockUid = `mock-google-${Date.now()}`;
-    const now = new Date().toISOString();
-    const userData = {
-      id: mockUid,
-      uid: mockUid,
-      name: 'Mock Google User',
-      email: 'mock.google@example.com',
-      photoURL: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150',
-      authProvider: 'google.com',
-      accountStatus: 'active',
-      createdAt: now,
-      lastSignInTime: now,
-      lastLoginAt: now,
-      role: 'user',
-      preferences: {
-        dietType: 'Vegetarian',
-        spiceLevel: 'Medium',
-        cuisines: ['indian'],
-        healthGoals: ['healthy_eating'],
-        allergies: [],
-        emailNotifications: true,
-      },
-      favoriteFoods: [],
-      searchHistory: []
-    };
-    saveLocalActiveUser(userData);
-    const users = getLocalUsers();
-    users[userData.email] = userData;
-    saveLocalUsers(users);
-    setToken(`mock-token-${mockUid}`);
-
-    // Synchronize with backend user store
-    await apiSyncUser(userData);
-
-    return { success: true, token: `mock-token-${mockUid}`, user: userData };
+    return res;
   }
+
+  throw new Error('Supabase authentication is not configured.');
 }
 
 export async function apiDeleteAccount() {
   if (isFirebaseConfigured) {
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
-    
+
     const uid = user.uid;
     const userDocRef = doc(db, 'users', uid);
     const docSnap = await getDoc(userDocRef);
-    
+
     if (docSnap.exists()) {
       const reports = docSnap.data().medicalReports || [];
       for (const report of reports) {
@@ -1098,10 +1327,10 @@ export async function apiDeleteAccount() {
         }
       }
     }
-    
+
     // Delete master user profile document users/{uid}
     await deleteDoc(userDocRef);
-    
+
     // Delete Firebase Auth account
     await user.delete();
     clearToken();
@@ -1125,8 +1354,50 @@ export async function apiDeleteAccount() {
 //  ADDITIONAL AUTHENTICATION & SUGGESTIONS SERVICES
 // ═════════════════════════════════════════════════════════════
 
+// 0. Resend Verification Email Flow
+export async function apiResendVerificationEmail(email) {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) {
+    throw new Error('Please enter your email address.');
+  }
+
+  if (isSupabaseConfigured) {
+    const res = await supabaseResendVerificationEmail({ email: cleanEmail });
+    if (!res.success) {
+      const err = new Error(res.error || 'Failed to resend verification email');
+      err.code = res.code;
+      err.remainingSeconds = res.remainingSeconds;
+      throw err;
+    }
+    return {
+      success: true,
+      message: res.message || `Verification email sent to ${cleanEmail}! Please check your inbox and spam folder.`,
+    };
+  }
+
+  if (isFirebaseConfigured) {
+    if (auth.currentUser && !auth.currentUser.emailVerified) {
+      await sendEmailVerification(auth.currentUser);
+      return { success: true, message: `Verification email resent to ${cleanEmail}!` };
+    }
+    throw new Error('Please sign in first to resend your Firebase verification email.');
+  }
+
+  throw new Error('Verification email service is unavailable.');
+}
+
 // 1. Forgot Password Flow
 export async function apiForgotPassword(email) {
+  const cleanEmail = (email || '').trim().toLowerCase();
+
+  if (isSupabaseConfigured) {
+    const res = await supabaseResetPassword(cleanEmail);
+    if (!res.success) {
+      throw new Error(res.error || 'Failed to send password reset email');
+    }
+    return { success: true, message: res.message || 'Password reset link sent successfully! Check your inbox.' };
+  }
+
   if (isFirebaseConfigured) {
     // A. Send standard Firebase Authentication reset email
     await sendPasswordResetEmail(auth, email);
@@ -1143,12 +1414,7 @@ export async function apiForgotPassword(email) {
     }
     return { success: true };
   } else {
-    await sleep(MOCK_DELAY);
-    const users = getLocalUsers();
-    if (!users[email.toLowerCase()]) {
-      throw new Error('Email address not registered.');
-    }
-    return { success: true };
+    throw new Error('Password reset service is unavailable.');
   }
 }
 
@@ -1167,7 +1433,7 @@ export async function apiGetNotificationSettings() {
   if (isFirebaseConfigured) {
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
-    
+
     const docRef = doc(db, 'users', user.uid, 'settings', 'preferences');
     const snap = await getDoc(docRef);
     if (snap.exists()) {
@@ -1178,10 +1444,10 @@ export async function apiGetNotificationSettings() {
     const active = getLocalActiveUser();
     if (!active) throw new Error('Not authenticated');
     const key = `nb_settings_${active.id}`;
-    const stored = localStorage.getItem(key);
-    return { 
-      success: true, 
-      settings: stored ? JSON.parse(stored) : defaultPrefs 
+    const stored = getItemSync(key);
+    return {
+      success: true,
+      settings: stored ? JSON.parse(stored) : defaultPrefs
     };
   }
 }
@@ -1191,7 +1457,7 @@ export async function apiUpdateNotificationSettings(settings) {
   if (isFirebaseConfigured) {
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
-    
+
     const docRef = doc(db, 'users', user.uid, 'settings', 'preferences');
     await setDoc(docRef, settings, { merge: true });
     return { success: true, settings };
@@ -1199,7 +1465,7 @@ export async function apiUpdateNotificationSettings(settings) {
     const active = getLocalActiveUser();
     if (!active) throw new Error('Not authenticated');
     const key = `nb_settings_${active.id}`;
-    localStorage.setItem(key, JSON.stringify(settings));
+    setItemSync(key, JSON.stringify(settings));
     return { success: true, settings };
   }
 }
@@ -1230,40 +1496,81 @@ export async function apiTriggerTestNutritionEmail() {
 
 // 6. Get Suggestions Email History Logs
 export async function apiGetEmailHistory() {
-  if (isFirebaseConfigured) {
-    const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
-    
-    const querySnap = await getDocs(collection(db, 'users', user.uid, 'emailHistory'));
-    const history = querySnap.docs.map(docObj => docObj.data())
-      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-    return { success: true, history };
-  } else {
-    await sleep(50);
-    const active = getLocalActiveUser();
-    if (!active) throw new Error('Not authenticated');
-    const key = `nb_email_history_${active.id}`;
-    const stored = localStorage.getItem(key);
-    const mockHistory = stored ? JSON.parse(stored) : [
-      {
-        timestamp: new Date().toISOString(),
-        emailType: 'welcome',
-        subject: 'Welcome to FoodieBite 🎉',
-        deliveryStatus: 'success'
-      }
-    ];
-    return { success: true, history: mockHistory };
+  if (isFirebaseConfigured && auth && auth.currentUser) {
+    try {
+      const querySnap = await getDocs(collection(db, 'users', auth.currentUser.uid, 'emailHistory'));
+      const history = querySnap.docs.map(docObj => docObj.data())
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      return { success: true, history };
+    } catch (_) { }
   }
+
+  await sleep(50);
+  const active = getLocalActiveUser();
+  const key = `nb_email_history_${active?.id || 'default'}`;
+  const stored = getItemSync(key);
+  const mockHistory = stored ? JSON.parse(stored) : [
+    {
+      timestamp: new Date().toISOString(),
+      emailType: 'welcome',
+      subject: 'Welcome to FoodieBite 🎉',
+      deliveryStatus: 'success'
+    }
+  ];
+  return { success: true, history: mockHistory };
 }
 
 // 7. Complete Profile service
 export async function apiCompleteProfile(profileData) {
-  if (isFirebaseConfigured) {
+  if (isSupabaseConfigured) {
+    const active = getLocalActiveUser();
+    const updatePayload = {
+      age: parseInt(profileData.age, 10) || null,
+      gender: profileData.gender || null,
+      diet_type: profileData.dietType || 'Vegetarian',
+      preferences: {
+        ...(active?.preferences || {}),
+        dietType: profileData.dietType || 'Vegetarian',
+        height: profileData.height ? String(profileData.height) : '',
+        weight: profileData.weight ? String(profileData.weight) : '',
+        activityLevel: profileData.activityLevel || 'Sedentary',
+      },
+    };
+
+    const res = await supabaseUpdateProfileData(updatePayload);
+    if (!res.success) {
+      throw new Error(res.error || 'Failed to complete profile');
+    }
+
+    const updatedUser = {
+      ...(active || {}),
+      ...res.profile,
+      age: res.profile?.age || updatePayload.age,
+      gender: res.profile?.gender || updatePayload.gender,
+      dietType: res.profile?.diet_type || updatePayload.diet_type,
+      preferences: res.profile?.preferences || updatePayload.preferences,
+      profileCompleted: true,
+    };
+
+    saveLocalActiveUser(updatedUser);
+
+    if (isFirebaseConfigured && auth && auth.currentUser) {
+      try {
+        const userDocRef = doc(db, 'users', auth.currentUser.uid);
+        await updateDoc(userDocRef, {
+          age: updatedUser.age,
+          gender: updatedUser.gender,
+          preferences: updatedUser.preferences,
+        });
+      } catch (_) { }
+    }
+
+    return { success: true, user: updatedUser };
+  }
+
+  if (isFirebaseConfigured && auth && auth.currentUser) {
     const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
-    
     const userDocRef = doc(db, 'users', user.uid);
-    // Fetch current document to merge preferences
     const snap = await getDoc(userDocRef);
     const existingPrefs = snap.exists() ? (snap.data().preferences || {}) : {};
 
@@ -1278,7 +1585,7 @@ export async function apiCompleteProfile(profileData) {
         dietType: profileData.dietType || 'Vegetarian'
       }
     };
-    
+
     await updateDoc(userDocRef, updateData);
     const latest = await getDoc(userDocRef);
     return { success: true, user: latest.data() };
@@ -1286,7 +1593,7 @@ export async function apiCompleteProfile(profileData) {
     await sleep(200);
     const active = getLocalActiveUser();
     if (!active) throw new Error('Not authenticated');
-    
+
     const updated = {
       ...active,
       age: profileData.age,
@@ -1297,13 +1604,16 @@ export async function apiCompleteProfile(profileData) {
       preferences: {
         ...active.preferences,
         dietType: profileData.dietType || 'Vegetarian'
-      }
+      },
+      profileCompleted: true,
     };
-    
+
     saveLocalActiveUser(updated);
     const users = getLocalUsers();
-    users[active.email] = updated;
-    saveLocalUsers(users);
+    if (active.email) {
+      users[active.email] = updated;
+      saveLocalUsers(users);
+    }
     return { success: true, user: updated };
   }
 }
@@ -1325,7 +1635,7 @@ export async function apiSubmitFeedback({ name, email, rating, message }) {
     return data;
   } else {
     await sleep(MOCK_DELAY);
-    const feedbackList = JSON.parse(localStorage.getItem('nb_mock_feedback') || '[]');
+    const feedbackList = getJSONSync('nb_mock_feedback', []);
     const active = getLocalActiveUser();
     const uid = active ? active.id : 'mock-anonymous';
     const newFeedback = {
@@ -1338,7 +1648,7 @@ export async function apiSubmitFeedback({ name, email, rating, message }) {
       createdAt: new Date().toISOString()
     };
     feedbackList.push(newFeedback);
-    localStorage.setItem('nb_mock_feedback', JSON.stringify(feedbackList));
+    setItemSync('nb_mock_feedback', JSON.stringify(feedbackList));
     return { success: true };
   }
 }
@@ -1461,33 +1771,21 @@ function withTimeout(promise, ms) {
 }
 
 export async function apiSendChatMessage(threadId, message, userContext = {}) {
-  console.log('AI Request Started');
-
-  // ── Get Firebase ID token (required by restored authMiddleware) ──
-  let token = null;
+  // If running on mobile (Android/iOS) or offline or without custom remote backend,
+  // execute local AI engine directly with zero network latency:
   try {
-    const fbUser = auth.currentUser;
-    if (fbUser) {
-      token = await fbUser.getIdToken(false); // false = use cached if valid
-    } else {
-      // Fall back to the stored JWT for non-Firebase mock mode
-      token = getToken();
+    const isMobile = typeof Platform !== 'undefined' && Platform.OS !== 'web';
+    const isLocalhost = !(process.env.REACT_APP_API_URL) || process.env.REACT_APP_API_URL.includes('localhost');
+
+    if (isMobile || isLocalhost) {
+      return await processLocalAiMessage(message, userContext);
     }
-  } catch (tokenErr) {
-    console.warn('Failed to get Firebase ID token, using stored token:', tokenErr.message);
-    token = getToken();
-  }
+  } catch (_) {}
 
-  // ── If no token at all, assign dev mock token so request hits backend ──
-  if (!token) {
-    console.log('AI Request using dev mock token');
-    token = 'mock_guest_token_dev_2026';
-  }
-
+  // Attempt remote /coach if configured, falling back seamlessly to local engine:
   try {
+    let token = getToken() || 'mock_guest_token_dev_2026';
     const controller = new AbortController();
-
-    // Race fetch against AI_TIMEOUT_MS hard timeout
     const data = await withTimeout(
       fetch(
         `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/coach`,
@@ -1507,22 +1805,14 @@ export async function apiSendChatMessage(threadId, message, userContext = {}) {
         }
         return json;
       }),
-      AI_TIMEOUT_MS
+      8000
     );
 
-    console.log('AI Response Received:', data);
-    return data;
-
-  } catch (error) {
-    console.warn('apiSendChatMessage network error:', error.message);
-
-    return {
-      success: false,
-      source: 'foodiebite_ai_error',
-      reply: `Connection error: ${error.message}`,
-      type: 'error',
-      options: []
-    };
+    if (data && data.reply) return data;
+    return await processLocalAiMessage(message, userContext);
+  } catch (err) {
+    console.warn('apiSendChatMessage backend unreachable, falling back to local AI engine:', err.message);
+    return await processLocalAiMessage(message, userContext);
   }
 }
 
@@ -1554,7 +1844,7 @@ export async function apiLogMeal(meal) {
   if (isFirebaseConfigured) {
     const user = auth.currentUser;
     if (!user) throw new Error('Not authenticated');
-    
+
     // Add doc to subcollection users/{userId}/mealLogs
     const logRef = doc(collection(db, 'users', user.uid, 'mealLogs'));
     const logObj = {
@@ -1568,15 +1858,15 @@ export async function apiLogMeal(meal) {
     await sleep(MOCK_DELAY);
     const active = getLocalActiveUser();
     if (!active) throw new Error('Not authenticated');
-    
-    const logs = JSON.parse(localStorage.getItem(`logs-${active.id}`) || '[]');
+
+    const logs = getJSONSync(`logs-${active.id}`, []);
     const logObj = {
       id: `log-${Date.now()}`,
       ...meal,
       loggedAt: new Date().toISOString()
     };
     logs.push(logObj);
-    localStorage.setItem(`logs-${active.id}`, JSON.stringify(logs));
+    setItemSync(`logs-${active.id}`, JSON.stringify(logs));
     return { success: true, log: logObj };
   }
 }
@@ -1751,7 +2041,7 @@ export async function apiAdminGetAuditLogs(limit = 50) {
     });
     const data = await res.json();
     if (res.ok && data.success) return data;
-  } catch (e) {}
+  } catch (e) { }
   return { success: true, count: 0, logs: [] };
 }
 
@@ -1767,10 +2057,7 @@ export async function apiAdminLogin(credentials) {
     });
     const data = await res.json();
     if (res.ok && data.success) {
-      if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.setItem('foodiebite_admin_session', JSON.stringify(data));
-      }
-      localStorage.setItem('foodiebite_admin_session', JSON.stringify(data));
+      setItemSync('foodiebite_admin_session', JSON.stringify(data));
       return data;
     }
     throw new Error(data.message || 'Invalid administrator credentials');
@@ -1781,9 +2068,7 @@ export async function apiAdminLogin(credentials) {
 
 export function getAdminSession() {
   try {
-    const s = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('foodiebite_admin_session')) ||
-              (typeof localStorage !== 'undefined' && localStorage.getItem('foodiebite_admin_session'));
-    return s ? JSON.parse(s) : null;
+    return getJSONSync('foodiebite_admin_session', null);
   } catch (e) {
     return null;
   }
@@ -1805,10 +2090,7 @@ export async function apiAdminCreateAccount(payload) {
     });
     const data = await res.json();
     if (res.ok && data.success) {
-      if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.setItem('foodiebite_admin_session', JSON.stringify(data));
-      }
-      localStorage.setItem('foodiebite_admin_session', JSON.stringify(data));
+      setItemSync('foodiebite_admin_session', JSON.stringify(data));
       return data;
     }
     throw new Error(data.message || 'Failed to create administrator account');
@@ -1832,10 +2114,7 @@ export async function apiAdminCreateAccount(payload) {
           adminKey: 'foodiebite_ai_live_key_2026',
           admin: newAdmin
         };
-        if (typeof sessionStorage !== 'undefined') {
-          sessionStorage.setItem('foodiebite_admin_session', JSON.stringify(session));
-        }
-        localStorage.setItem('foodiebite_admin_session', JSON.stringify(session));
+        setItemSync('foodiebite_admin_session', JSON.stringify(session));
         return session;
       } catch (dbE) {
         console.warn('Direct Firestore admin create failed:', dbE.message);
@@ -1863,19 +2142,15 @@ export async function apiAdminCreateAccount(payload) {
       adminKey: 'foodiebite_ai_live_key_2026',
       admin: newAdmin
     };
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.setItem('foodiebite_admin_session', JSON.stringify(session));
-    }
-    localStorage.setItem('foodiebite_admin_session', JSON.stringify(session));
+    setItemSync('foodiebite_admin_session', JSON.stringify(session));
     return session;
   }
 }
 
 export function clearAdminSession() {
   try {
-    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem('foodiebite_admin_session');
-    if (typeof localStorage !== 'undefined') localStorage.removeItem('foodiebite_admin_session');
-  } catch (e) {}
+    removeItemSync('foodiebite_admin_session');
+  } catch (e) { }
 }
 
 export async function apiAdminGetUsers() {
@@ -2000,7 +2275,7 @@ export async function apiAdminGetUserDetails(id) {
         try {
           const emSnap = await getDocs(query(collection(db, 'email_logs'), where('recipient', '==', (u.email || '').toLowerCase())));
           emSnap.forEach(d => emails.push({ id: d.id, ...d.data() }));
-        } catch (_) {}
+        } catch (_) { }
         if (u.welcomeEmailSent) {
           emails.push({
             id: `welcome_${id}`,
@@ -2029,7 +2304,7 @@ export async function apiAdminGetUserDetails(id) {
               });
             }
           });
-        } catch (_) {}
+        } catch (_) { }
 
         // Gather real security and operational activities
         const activities = [];
@@ -2245,9 +2520,9 @@ export async function apiAdminGetFeedback(params = {}) {
       const fbList = [];
       snap.forEach(d => fbList.push({ id: d.id, ...d.data() }));
       return { success: true, feedback: fbList, total: fbList.length };
-    } catch (_) {}
+    } catch (_) { }
   }
-  const feedbackList = JSON.parse(localStorage.getItem('nb_mock_feedback') || '[]');
+  const feedbackList = getJSONSync('nb_mock_feedback', []);
   return { success: true, feedback: feedbackList, total: feedbackList.length };
 }
 
@@ -2276,14 +2551,14 @@ export async function apiAdminResolveFeedback(id, replyMessage, status = 'resolv
         resolvedAt: new Date().toISOString()
       });
       return { success: true };
-    } catch (_) {}
+    } catch (_) { }
   }
-  const feedbackList = JSON.parse(localStorage.getItem('nb_mock_feedback') || '[]');
+  const feedbackList = getJSONSync('nb_mock_feedback', []);
   const item = feedbackList.find(f => f.id === id);
   if (item) {
     item.status = status;
     item.replyMessage = replyMessage;
-    localStorage.setItem('nb_mock_feedback', JSON.stringify(feedbackList));
+    setItemSync('nb_mock_feedback', JSON.stringify(feedbackList));
     return { success: true };
   }
   return { success: true };
@@ -2308,11 +2583,11 @@ export async function apiAdminDeleteFeedback(id) {
     try {
       await deleteDoc(doc(db, 'feedback', id));
       return { success: true };
-    } catch (_) {}
+    } catch (_) { }
   }
-  let feedbackList = JSON.parse(localStorage.getItem('nb_mock_feedback') || '[]');
+  let feedbackList = getJSONSync('nb_mock_feedback', []);
   feedbackList = feedbackList.filter(f => f.id !== id);
-  localStorage.setItem('nb_mock_feedback', JSON.stringify(feedbackList));
+  setItemSync('nb_mock_feedback', JSON.stringify(feedbackList));
   return { success: true };
 }
 
@@ -2335,12 +2610,12 @@ export async function apiAdminGetAnalytics() {
   const users = Object.values(getLocalUsers());
   const totalUsers = users.length;
   const activeUsers = users.filter(u => !u.disabled).length;
-  const feedbackList = JSON.parse(localStorage.getItem('nb_mock_feedback') || '[]');
+  const feedbackList = getJSONSync('nb_mock_feedback', []);
   const totalFeedback = feedbackList.length;
   let sum = 0;
   feedbackList.forEach(f => sum += (f.rating || 0));
   const avgFeedbackRating = totalFeedback > 0 ? (sum / totalFeedback).toFixed(2) : 0;
-  const aiLogs = JSON.parse(localStorage.getItem('nb_mock_ai_logs') || '[]');
+  const aiLogs = getJSONSync('nb_mock_ai_logs', []);
   const totalAiQueries = aiLogs.length;
   const geminiCount = aiLogs.filter(l => l.source === 'gemini').length;
   const fallbackCount = aiLogs.filter(l => l.source === 'fallback').length;
@@ -2565,7 +2840,7 @@ export async function apiGetMedicalReports() {
       if (fbUser) {
         token = await fbUser.getIdToken(false);
       }
-    } catch (_) {}
+    } catch (_) { }
     if (!token) token = getToken();
     if (!token) {
       const active = getLocalActiveUser();
@@ -2755,7 +3030,7 @@ export async function apiGetNearbyRestaurants({ lat, lng, radius, query, cuisine
   } else {
     // Client-side mock fallback
     await sleep(MOCK_DELAY * 2);
-    
+
     // Default coordinates: Avadi, Chennai
     const uLat = lat !== undefined && lat !== null ? parseFloat(lat) : 13.116;
     const uLng = lng !== undefined && lng !== null ? parseFloat(lng) : 80.101;
@@ -2859,8 +3134,8 @@ export async function apiGetNearbyRestaurants({ lat, lng, radius, query, cuisine
       const dLat = (la2 - la1) * Math.PI / 180;
       const dLon = (lo2 - lo1) * Math.PI / 180;
       const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(la1 * Math.PI / 180) * Math.cos(la2 * Math.PI / 180) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        Math.cos(la1 * Math.PI / 180) * Math.cos(la2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       return Number((R * c).toFixed(2));
     };
@@ -2871,7 +3146,7 @@ export async function apiGetNearbyRestaurants({ lat, lng, radius, query, cuisine
         const distStr = `${distance.toFixed(1)} km away`;
         const activeDiet = diet || '';
         const matchesCuisine = (cuisine && p.cuisine.toLowerCase().includes(cuisine.toLowerCase()));
-        
+
         let explanation = "";
         const pTags = Array.isArray(p.dietaryTags) ? p.dietaryTags : [];
         if (activeDiet === 'vegetarian' && pTags.includes('vegetarian')) {

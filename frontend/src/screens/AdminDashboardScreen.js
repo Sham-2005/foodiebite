@@ -1,28 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { 
-  View, 
-  Text, 
-  TouchableOpacity, 
-  StyleSheet, 
-  ScrollView, 
-  TextInput, 
-  ActivityIndicator, 
-  Alert, 
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  TextInput,
+  ActivityIndicator,
+  Alert,
   Linking,
   Modal
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { 
-  Users, 
-  MessageSquare, 
-  FileText, 
-  Activity, 
-  BarChart2, 
-  Trash2, 
-  CheckCircle, 
-  ShieldAlert, 
-  XCircle, 
+import storage, { getItemSync, removeItemSync } from '../services/storage';
+import {
+  Users,
+  MessageSquare,
+  FileText,
+  Activity,
+  BarChart2,
+  Trash2,
+  CheckCircle,
+  ShieldAlert,
+  XCircle,
   RefreshCw,
   Search,
   Mail,
@@ -59,7 +60,7 @@ const AdminIntelligenceSection = React.lazy(() => import('../components/AdminInt
 const AdminEmailCampaignSection = React.lazy(() => import('../components/admin/AdminEmailCampaignSection'));
 const AdminFeedbackSection = React.lazy(() => import('../components/admin/AdminFeedbackSection'));
 
-import { 
+import {
   apiAdminLogin,
   getAdminSession,
   clearAdminSession,
@@ -211,7 +212,7 @@ export default function AdminDashboardScreen() {
           name: user.displayName || 'Authorized Admin',
           role: 'admin'
         },
-        token: user?.stsTokenManager?.accessToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('nb_token') : null) || 'admin_token'
+        token: user?.stsTokenManager?.accessToken || getItemSync('nb_token') || 'admin_token'
       };
     }
     return null;
@@ -227,7 +228,7 @@ export default function AdminDashboardScreen() {
           name: user.displayName || 'Authorized Admin',
           role: 'admin'
         },
-        token: user?.stsTokenManager?.accessToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('nb_token') : null) || 'admin_token'
+        token: user?.stsTokenManager?.accessToken || getItemSync('nb_token') || 'admin_token'
       });
     }
   }, [user]);
@@ -245,16 +246,11 @@ export default function AdminDashboardScreen() {
     } catch (e) {
       console.error('Logout error:', e);
     }
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('nb_token');
-      localStorage.removeItem('nb_active_session');
-      localStorage.removeItem('nb_mock_active');
-      localStorage.removeItem('foodiebite_admin_session');
-    }
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.removeItem('foodiebite_admin_session');
-      sessionStorage.removeItem('foodiebite_redirect_after_login');
-    }
+    removeItemSync('nb_token');
+    removeItemSync('nb_active_session');
+    removeItemSync('nb_mock_active');
+    removeItemSync('foodiebite_admin_session');
+    removeItemSync('foodiebite_redirect_after_login');
     if (typeof window !== 'undefined' && window.location) {
       window.location.href = '/signin';
     } else {
@@ -465,7 +461,7 @@ export default function AdminDashboardScreen() {
         if (p && ['overview', 'users', 'campaigns', 'foods', 'analytics', 'feedback', 'settings'].includes(p)) {
           return p;
         }
-      } catch (_) {}
+      } catch (_) { }
     }
     return 'overview';
   });
@@ -488,7 +484,7 @@ export default function AdminDashboardScreen() {
   const USERS_PER_PAGE = 10;
   const [feedbackFilter, setFeedbackFilter] = useState('all'); // all, pending, resolved
   const [restaurantFilter, setRestaurantFilter] = useState('ALL'); // ALL, PENDING, APPROVED, REJECTED
-  
+
   // User inspection details state
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [selectedUserSno, setSelectedUserSno] = useState(null);
@@ -664,8 +660,8 @@ export default function AdminDashboardScreen() {
   };
 
   const handleRejectRequest = async (id) => {
-    const reason = typeof window !== 'undefined' && window.prompt 
-      ? window.prompt('Enter rejection reason for merchant:', 'Does not meet menu standards') 
+    const reason = typeof window !== 'undefined' && window.prompt
+      ? window.prompt('Enter rejection reason for merchant:', 'Does not meet menu standards')
       : 'Does not meet menu standards';
     if (reason !== null) {
       try {
@@ -687,8 +683,8 @@ export default function AdminDashboardScreen() {
       `Are you sure you want to change this user's role to ${nextRole}?`,
       [
         { text: "Cancel", style: "cancel" },
-        { 
-          text: "Confirm", 
+        {
+          text: "Confirm",
           onPress: async () => {
             try {
               await apiAdminUpdateUser(userId, { role: nextRole });
@@ -713,8 +709,8 @@ export default function AdminDashboardScreen() {
       `Are you sure you want to ${nextDisabled ? 'DISABLE' : 'ENABLE'} this user account?`,
       [
         { text: "Cancel", style: "cancel" },
-        { 
-          text: "Confirm", 
+        {
+          text: "Confirm",
           onPress: async () => {
             try {
               await apiAdminDisableUser(userId, nextDisabled);
@@ -755,8 +751,8 @@ export default function AdminDashboardScreen() {
       "Are you sure you want to delete this feedback document permanently?",
       [
         { text: "Cancel", style: "cancel" },
-        { 
-          text: "Delete", 
+        {
+          text: "Delete",
           style: "destructive",
           onPress: async () => {
             try {
@@ -772,7 +768,7 @@ export default function AdminDashboardScreen() {
   };
 
   // Filtered lists
-  const filteredUsers = users.filter(u => 
+  const filteredUsers = users.filter(u =>
     u.name?.toLowerCase().includes(userSearch.toLowerCase()) ||
     u.email?.toLowerCase().includes(userSearch.toLowerCase())
   );
@@ -810,10 +806,11 @@ export default function AdminDashboardScreen() {
           <TouchableOpacity onPress={loadData} style={{ padding: 4 }}>
             <RefreshCw size={15} color={C.orange} />
           </TouchableOpacity>
-          <TouchableOpacity 
-            onPress={handleAdminLogout} 
-            style={styles.adminLogoutBtn} 
-            accessibilityLabel="Sign out of Admin Dashboard"
+          <TouchableOpacity
+            onPress={handleAdminLogout}
+            style={styles.adminLogoutBtn}
+            role="button"
+            aria-label="Sign out of Admin Dashboard"
           >
             <LogOut size={12} color="#EF4444" style={{ marginRight: 3 }} />
             <Text style={styles.adminLogoutBtnText}>Logout</Text>
@@ -876,7 +873,7 @@ export default function AdminDashboardScreen() {
                 {/* Metric Cards Grid */}
                 <View style={{ gap: 12 }}>
                   <View style={{ flexDirection: 'row', gap: 12 }}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       activeOpacity={0.8}
                       onPress={() => handleTabSelect('users')}
                       style={styles.metricCard}
@@ -886,7 +883,7 @@ export default function AdminDashboardScreen() {
                       <Text style={styles.metricSub}>Registered Users Directory</Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       activeOpacity={0.8}
                       onPress={() => handleTabSelect('users')}
                       style={styles.metricCard}
@@ -904,7 +901,7 @@ export default function AdminDashboardScreen() {
                       <Text style={styles.metricSub}>System Platform Health</Text>
                     </View>
 
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       activeOpacity={0.8}
                       onPress={() => handleTabSelect('feedback')}
                       style={styles.metricCard}
@@ -919,8 +916,8 @@ export default function AdminDashboardScreen() {
                 {/* Quick Navigation Panels */}
                 <View style={{ gap: 10 }}>
                   <Text style={styles.sectionTitle}>Dashboard Quick Actions</Text>
-                  
-                  <TouchableOpacity 
+
+                  <TouchableOpacity
                     onPress={() => handleTabSelect('users')}
                     style={styles.quickNavRow}
                   >
@@ -934,7 +931,7 @@ export default function AdminDashboardScreen() {
                     <ChevronRight size={18} color={C.muted} />
                   </TouchableOpacity>
 
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     onPress={() => handleTabSelect('feedback')}
                     style={styles.quickNavRow}
                   >
@@ -965,41 +962,41 @@ export default function AdminDashboardScreen() {
 
                 {/* AI Coach Platform Health Status */}
                 {stats && (
-                <View style={styles.statusCard}>
-                  <View style={styles.statusHeader}>
-                    <Text style={styles.statusTitle}>AI Coach Platform Health</Text>
-                    <View style={[styles.slaBadge, { backgroundColor: stats.aiSuccessRate > 90 ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)' }]}>
-                      <Text style={[styles.slaText, { color: stats.aiSuccessRate > 90 ? '#10B981' : '#F59E0B' }]}>
-                        {stats.aiSuccessRate}% SLA Success
+                  <View style={styles.statusCard}>
+                    <View style={styles.statusHeader}>
+                      <Text style={styles.statusTitle}>AI Coach Platform Health</Text>
+                      <View style={[styles.slaBadge, { backgroundColor: stats.aiSuccessRate > 90 ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)' }]}>
+                        <Text style={[styles.slaText, { color: stats.aiSuccessRate > 90 ? '#10B981' : '#F59E0B' }]}>
+                          {stats.aiSuccessRate}% SLA Success
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={{ gap: 10 }}>
+                      <View style={styles.statusRow}>
+                        <Text style={{ color: C.muted, fontSize: 12 }}>Total Chat Queries processed:</Text>
+                        <Text style={{ fontWeight: '700', color: '#fff', fontSize: 12 }}>{stats.totalAiQueries}</Text>
+                      </View>
+                      <View style={styles.statusRow}>
+                        <Text style={{ color: C.muted, fontSize: 12 }}>Primary AI (Gemini):</Text>
+                        <Text style={{ color: '#10B981', fontWeight: '700', fontSize: 12 }}>{stats.geminiCount} requests</Text>
+                      </View>
+                      <View style={styles.statusRow}>
+                        <Text style={{ color: C.muted, fontSize: 12 }}>Mock Fallback Engine triggers:</Text>
+                        <Text style={{ color: stats.fallbackCount > 0 ? '#FF6B35' : C.muted, fontWeight: '700', fontSize: 12 }}>{stats.fallbackCount} sessions</Text>
+                      </View>
+
+                      <View style={styles.progressBg}>
+                        <View style={[styles.progressFill, { width: `${stats.totalAiQueries > 0 ? (stats.geminiCount / stats.totalAiQueries) * 100 : 100}%` }]} />
+                      </View>
+                      <Text style={styles.progressDesc}>
+                        Orange indicates ratio of queries solved by Gemini without falling back.
                       </Text>
                     </View>
                   </View>
-
-                  <View style={{ gap: 10 }}>
-                    <View style={styles.statusRow}>
-                      <Text style={{ color: C.muted, fontSize: 12 }}>Total Chat Queries processed:</Text>
-                      <Text style={{ fontWeight: '700', color: '#fff', fontSize: 12 }}>{stats.totalAiQueries}</Text>
-                    </View>
-                    <View style={styles.statusRow}>
-                      <Text style={{ color: C.muted, fontSize: 12 }}>Primary AI (Gemini):</Text>
-                      <Text style={{ color: '#10B981', fontWeight: '700', fontSize: 12 }}>{stats.geminiCount} requests</Text>
-                    </View>
-                    <View style={styles.statusRow}>
-                      <Text style={{ color: C.muted, fontSize: 12 }}>Mock Fallback Engine triggers:</Text>
-                      <Text style={{ color: stats.fallbackCount > 0 ? '#FF6B35' : C.muted, fontWeight: '700', fontSize: 12 }}>{stats.fallbackCount} sessions</Text>
-                    </View>
-
-                    <View style={styles.progressBg}>
-                      <View style={[styles.progressFill, { width: `${stats.totalAiQueries > 0 ? (stats.geminiCount / stats.totalAiQueries) * 100 : 100}%` }]} />
-                    </View>
-                    <Text style={styles.progressDesc}>
-                      Orange indicates ratio of queries solved by Gemini without falling back.
-                    </Text>
-                  </View>
-                </View>
-              )}
-            </View>
-          )}
+                )}
+              </View>
+            )}
 
             {/* USERS TAB */}
             {activeTab === 'users' && (
@@ -1100,7 +1097,7 @@ export default function AdminDashboardScreen() {
 
                     {/* Admin Action Buttons */}
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={() => promptDisableUser(selectedUserDetails)}
                         style={[
                           styles.userActionBtn,
@@ -1113,7 +1110,7 @@ export default function AdminDashboardScreen() {
                         </Text>
                       </TouchableOpacity>
 
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={() => promptDeleteUserStep1(selectedUserDetails)}
                         style={[
                           styles.userActionBtn,
@@ -1242,11 +1239,11 @@ export default function AdminDashboardScreen() {
                                 <View style={{ flex: 1 }}>
                                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                                     {isPassword ? <Key size={12} color={eventIconColor} /> :
-                                     isLogin ? <UserCheck size={12} color={eventIconColor} /> :
-                                     isReg ? <Users size={12} color={eventIconColor} /> :
-                                     isFb ? <MessageSquare size={12} color={eventIconColor} /> :
-                                     isPref ? <Utensils size={12} color={eventIconColor} /> :
-                                     <Activity size={12} color={eventIconColor} />}
+                                      isLogin ? <UserCheck size={12} color={eventIconColor} /> :
+                                        isReg ? <Users size={12} color={eventIconColor} /> :
+                                          isFb ? <MessageSquare size={12} color={eventIconColor} /> :
+                                            isPref ? <Utensils size={12} color={eventIconColor} /> :
+                                              <Activity size={12} color={eventIconColor} />}
                                     <Text style={[styles.activityEventTitle, { color: isPassword ? '#F59E0B' : '#fff' }]}>
                                       {act.title}
                                     </Text>
@@ -1279,8 +1276,8 @@ export default function AdminDashboardScreen() {
                   {/* Search bar */}
                   <View style={styles.searchBar}>
                     <Search size={16} color={C.muted} />
-                    <TextInput 
-                      placeholder="Search by username, email, or diet type..." 
+                    <TextInput
+                      placeholder="Search by username, email, or diet type..."
                       placeholderTextColor="#444"
                       value={userSearch}
                       onChangeText={setUserSearch}
@@ -1326,8 +1323,8 @@ export default function AdminDashboardScreen() {
                             const lastLogin = formatDateOnly(user.lastSignInTime || user.lastLoginAt || user.lastLogin || user.metadata?.lastSignInTime);
 
                             return (
-                              <TouchableOpacity 
-                                key={user.id || user.uid || globalIndex} 
+                              <TouchableOpacity
+                                key={user.id || user.uid || globalIndex}
                                 activeOpacity={0.7}
                                 onPress={() => handleSelectUser(user, globalIndex + 1)}
                                 style={[
@@ -1414,8 +1411,8 @@ export default function AdminDashboardScreen() {
                             disabled={userPage <= 1}
                             onPress={() => setUserPage(p => Math.max(1, p - 1))}
                             style={[styles.pageBtn, userPage <= 1 && styles.pageBtnDisabled]}
-                            accessibilityRole="button"
-                            accessibilityLabel="Previous page"
+                            role="button"
+                            aria-label="Previous page"
                           >
                             <Text style={[styles.pageBtnText, userPage <= 1 && styles.pageBtnTextDisabled]}>Previous</Text>
                           </TouchableOpacity>
@@ -1426,8 +1423,8 @@ export default function AdminDashboardScreen() {
                             disabled={userPage >= totalUserPages}
                             onPress={() => setUserPage(p => Math.min(totalUserPages, p + 1))}
                             style={[styles.pageBtn, userPage >= totalUserPages && styles.pageBtnDisabled]}
-                            accessibilityRole="button"
-                            accessibilityLabel="Next page"
+                            role="button"
+                            aria-label="Next page"
                           >
                             <Text style={[styles.pageBtnText, userPage >= totalUserPages && styles.pageBtnTextDisabled]}>Next</Text>
                           </TouchableOpacity>
@@ -1745,7 +1742,7 @@ export default function AdminDashboardScreen() {
                       {/* Preferences Section */}
                       <View style={styles.notificationGroupCard}>
                         <Text style={styles.notificationGroupHeader}>Automated Email Preferences</Text>
-                        
+
                         {/* 1. Welcome Email */}
                         <View style={styles.notificationToggleRow}>
                           <View style={{ flex: 1, paddingRight: 10 }}>
@@ -1975,17 +1972,17 @@ export default function AdminDashboardScreen() {
               <View style={[
                 styles.modalIconBox,
                 confirmModal.type === 'delete_step2' ? { backgroundColor: 'rgba(239,68,68,0.2)' } :
-                confirmModal.type === 'delete_step1' ? { backgroundColor: 'rgba(245,158,11,0.2)' } :
-                confirmModal.isDisable ? { backgroundColor: 'rgba(239,68,68,0.2)' } : { backgroundColor: 'rgba(16,185,129,0.2)' }
+                  confirmModal.type === 'delete_step1' ? { backgroundColor: 'rgba(245,158,11,0.2)' } :
+                    confirmModal.isDisable ? { backgroundColor: 'rgba(239,68,68,0.2)' } : { backgroundColor: 'rgba(16,185,129,0.2)' }
               ]}>
                 {confirmModal.type === 'delete_step2' ? <Trash2 size={24} color="#EF4444" /> :
-                 confirmModal.type === 'delete_step1' ? <AlertTriangle size={24} color="#F59E0B" /> :
-                 confirmModal.isDisable ? <UserX size={24} color="#EF4444" /> : <UserCheck size={24} color="#10B981" />}
+                  confirmModal.type === 'delete_step1' ? <AlertTriangle size={24} color="#F59E0B" /> :
+                    confirmModal.isDisable ? <UserX size={24} color="#EF4444" /> : <UserCheck size={24} color="#10B981" />}
               </View>
               <Text style={styles.modalTitle}>
                 {confirmModal.type === 'delete_step2' ? 'Final Confirmation Required' :
-                 confirmModal.type === 'delete_step1' ? 'Permanently Delete Account' :
-                 confirmModal.isDisable ? 'Disable Account' : 'Enable Account'}
+                  confirmModal.type === 'delete_step1' ? 'Permanently Delete Account' :
+                    confirmModal.isDisable ? 'Disable Account' : 'Enable Account'}
               </Text>
             </View>
 
@@ -2106,8 +2103,8 @@ function AdminFooter({ activeTab, onTabSelect }) {
               onPress={() => onTabSelect(item.id)}
               style={[styles.adminFooterItem, isActive && styles.adminFooterItemActive]}
               activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel={`Admin ${item.label}`}
+              role="button"
+              aria-label={`Admin ${item.label}`}
             >
               <View style={[styles.adminFooterIconWrapper, isActive && styles.adminFooterIconActive]}>
                 <Icon size={19} color={isActive ? C.orange : '#94a3b8'} />

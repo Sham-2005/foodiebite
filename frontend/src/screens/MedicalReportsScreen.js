@@ -54,7 +54,6 @@ import {
   validateMedicalPdf
 } from '../services/medicalReportsService';
 import { useApp } from '../context/AppContext';
-import { auth } from '../services/firebase';
 import { C } from '../components/UI';
 import AppLayout from '../components/AppLayout';
 
@@ -98,8 +97,8 @@ export default function MedicalReportsScreen() {
   const { user } = useApp();
   const { width: windowWidth } = useWindowDimensions();
 
-  // Active user ID (Firebase Auth UID or local session fallback)
-  const userId = auth?.currentUser?.uid || user?.uid || user?.id || 'guest_user';
+  // Active user ID
+  const userId = user?.uid || user?.id || 'guest_user';
 
   // State
   const [selectedFile, setSelectedFile] = useState(null);

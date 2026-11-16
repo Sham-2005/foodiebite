@@ -1,19 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { Mail, Lock, Eye, EyeOff, X, Shield } from 'lucide-react-native';
 import { BtnOrange, TextInput, C } from '../components/UI';
 import { useApp } from '../context/AppContext';
-import { apiLogin, apiLoginWithGoogle, apiForgotPassword } from '../services/api';
+import { apiLogin, apiLoginWithGoogle, apiForgotPassword, apiResendVerificationEmail } from '../services/api';
 
 export default function SignInScreen() {
   const navigation = useNavigation();
+  const route = useRoute();
+  const notice = route?.params?.verificationNotice;
+  const prefillEmail = route?.params?.prefillEmail || '';
   const { setUser } = useApp();
-  const [email,    setEmail]    = useState('');
+  const [email,    setEmail]    = useState(prefillEmail);
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [error,    setError]    = useState('');
   const [loading,  setLoading]  = useState(false);
+
+  // ── Email Verification Resend states ──
+  const [isUnverified, setIsUnverified] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendSuccess, setResendSuccess] = useState('');
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
 
   // ── Forgot Password states ──
   const [resetModal, setResetModal] = useState(false);
@@ -23,29 +32,61 @@ export default function SignInScreen() {
 
   const AUTHORIZED_ADMIN_EMAIL = 'sham111205s@gmail.com';
 
+  // Sync prefilled email if passed via navigation params
+  useEffect(() => {
+    if (prefillEmail && !email) {
+      setEmail(prefillEmail);
+    }
+  }, [prefillEmail]);
+
+  // Cooldown countdown timer
+  useEffect(() => {
+    let timer = null;
+    if (cooldownSeconds > 0) {
+      timer = setTimeout(() => {
+        setCooldownSeconds(s => s - 1);
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [cooldownSeconds]);
+
   function routeAfterAuth(userData, rawEmail) {
     const cleanEmail = (userData?.email || rawEmail || '').trim().toLowerCase();
-    if (cleanEmail === AUTHORIZED_ADMIN_EMAIL) {
-      if (typeof window !== 'undefined' && window.location) {
+    const isAdmin = cleanEmail === AUTHORIZED_ADMIN_EMAIL;
+    const isProfileComplete = Boolean(
+      userData?.profileCompleted === true ||
+      (userData?.age && userData?.gender)
+    );
+
+    if (typeof window !== 'undefined' && window.location && window.location.pathname !== undefined) {
+      if (isAdmin) {
         window.location.href = '/admin';
       } else {
-        navigation.navigate('Admin');
+        window.location.href = isProfileComplete ? '/home' : '/complete-profile';
       }
-    } else {
-      if (typeof window !== 'undefined' && window.location) {
-        window.location.href = '/home';
-      } else {
-        navigation.navigate('Home');
-      }
+      return;
+    }
+
+    const targetRoute = isAdmin ? 'Admin' : (isProfileComplete ? 'Home' : 'CompleteProfile');
+    if (navigation && typeof navigation.replace === 'function') {
+      navigation.replace(targetRoute);
+    } else if (navigation && typeof navigation.navigate === 'function') {
+      navigation.navigate(targetRoute);
     }
   }
 
   async function handleGoogleSignIn() {
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setIsUnverified(false);
     try {
       const data = await apiLoginWithGoogle();
-      setUser(data.user);
-      routeAfterAuth(data.user);
+      if (data?.user) {
+        setUser(data.user);
+        routeAfterAuth(data.user);
+      } else if (data?.url && typeof window !== 'undefined' && window.location) {
+        window.location.href = data.url;
+      }
     } catch (err) {
       setError(err.message || 'Google Sign In failed. Please try again.');
     } finally {
@@ -54,33 +95,61 @@ export default function SignInScreen() {
   }
 
   async function handleSignIn() {
-    if (!email || !password) { setError('Please fill in all fields.'); return; }
-    setLoading(true); setError('');
+    const cleanEmail = (email || '').trim().toLowerCase();
+    if (!cleanEmail || !password) { setError('Please fill in all fields.'); return; }
+    setLoading(true); setError(''); setResendSuccess(''); setIsUnverified(false);
     try {
-      const data = await apiLogin({ email, password });
+      const data = await apiLogin({ email: cleanEmail, password });
       setUser(data.user);
-      routeAfterAuth(data.user, email);
+      routeAfterAuth(data.user, cleanEmail);
     } catch (err) {
+      if (err.isUnverified || /not been verified|verify your email|email not confirmed/i.test(err.message || '')) {
+        setIsUnverified(true);
+      }
       setError(err.message || 'Sign in failed. Please try again.');
     } finally {
       setLoading(false);
     }
   }
 
+  async function handleResendVerification() {
+    const targetEmail = (email || '').trim().toLowerCase();
+    if (!targetEmail) {
+      setError('Please enter your email address above to resend verification.');
+      return;
+    }
+    setResendLoading(true);
+    setResendSuccess('');
+    setError('');
+    try {
+      const res = await apiResendVerificationEmail(targetEmail);
+      setResendSuccess(res.message || `Verification email sent to ${targetEmail}!`);
+      setCooldownSeconds(60);
+    } catch (err) {
+      if (err.remainingSeconds) {
+        setCooldownSeconds(err.remainingSeconds);
+      }
+      setError(err.message || 'Failed to resend verification email.');
+    } finally {
+      setResendLoading(false);
+    }
+  }
+
   async function handleResetPassword() {
-    if (!resetEmail) {
+    const targetEmail = (resetEmail || '').trim().toLowerCase();
+    if (!targetEmail) {
       setResetMsg({ type: 'error', msg: 'Please enter your email address.' });
       return;
     }
     setResetLoading(true);
     setResetMsg(null);
     try {
-      await apiForgotPassword(resetEmail);
-      setResetMsg({ type: 'success', msg: 'Password reset link sent successfully! Check your inbox.' });
+      await apiForgotPassword(targetEmail);
+      setResetMsg({ type: 'success', msg: 'Password reset link sent successfully! Check your inbox and spam folder.' });
       setTimeout(() => {
         setResetModal(false);
         setResetMsg(null);
-      }, 2500);
+      }, 3500);
     } catch (err) {
       setResetMsg({ type: 'error', msg: err.message || 'Failed to send password reset link.' });
     } finally {
@@ -97,6 +166,12 @@ export default function SignInScreen() {
       <View style={styles.formContainer}>
         <Text style={styles.title}>Welcome Back! 👋</Text>
         <Text style={styles.subtitle}>Sign in to continue</Text>
+
+        {notice ? (
+          <View style={styles.noticeContainer}>
+            <Text style={styles.noticeText}>✉️ {notice}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.inputGroup}>
           <TextInput 
@@ -129,6 +204,36 @@ export default function SignInScreen() {
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
+        {/* Dedicated Unverified Account Guidance Card */}
+        {isUnverified && (
+          <View style={styles.unverifiedCard}>
+            <Text style={styles.unverifiedTitle}>Email Verification Required</Text>
+            <Text style={styles.unverifiedDesc}>
+              Please check your inbox (and spam/junk folder) for the confirmation link. If you didn't receive it, request a new link below:
+            </Text>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={handleResendVerification}
+              disabled={resendLoading || cooldownSeconds > 0}
+              style={[
+                styles.resendBtn,
+                (resendLoading || cooldownSeconds > 0) && { opacity: 0.6 }
+              ]}
+            >
+              <Text style={styles.resendBtnText}>
+                {resendLoading
+                  ? 'Sending...'
+                  : cooldownSeconds > 0
+                  ? `Resend available in ${cooldownSeconds}s`
+                  : '✉️ Resend Verification Email'}
+              </Text>
+            </TouchableOpacity>
+            {resendSuccess ? (
+              <Text style={styles.resendSuccessText}>✓ {resendSuccess}</Text>
+            ) : null}
+          </View>
+        )}
+
         <View style={{ marginTop: 20, marginBottom: 10 }}>
           <BtnOrange onClick={handleSignIn} disabled={loading}>
             {loading ? 'Signing in...' : 'Sign In'}
@@ -142,7 +247,6 @@ export default function SignInScreen() {
             style={[styles.googleButton, loading && { opacity: 0.7 }]}
           >
             <View style={styles.googleIconContainer}>
-              {/* Fallback to simple styled elements representing Google logo */}
               <View style={styles.googleIconRed} />
               <View style={styles.googleIconBlue} />
             </View>
@@ -276,6 +380,48 @@ const styles = StyleSheet.create({
     color: '#ff4d6d',
     fontSize: 12,
     marginTop: 8,
+    lineHeight: 18,
+  },
+  unverifiedCard: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 107, 53, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 53, 0.25)',
+  },
+  unverifiedTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ff9266',
+    marginBottom: 4,
+  },
+  unverifiedDesc: {
+    fontSize: 12,
+    color: '#a0a7b4',
+    lineHeight: 17,
+    marginBottom: 10,
+  },
+  resendBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#20242c',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 53, 0.4)',
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    marginTop: 2,
+  },
+  resendBtnText: {
+    color: '#ff9266',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  resendSuccessText: {
+    color: '#4ade80',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 8,
   },
   googleButton: {
     flexDirection: 'row',
@@ -369,5 +515,20 @@ const styles = StyleSheet.create({
   alertMsgText: {
     fontSize: 12,
     fontWeight: '500',
+  },
+  noticeContainer: {
+    backgroundColor: 'rgba(34,197,94,0.12)',
+    borderColor: 'rgba(34,197,94,0.3)',
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  noticeText: {
+    color: '#22c55e',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

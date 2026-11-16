@@ -8,7 +8,7 @@ const {
   getFavorites,
   addFavoriteFood, removeFavoriteFood,
   uploadMedicalReport, getMedicalReports, deleteMedicalReport,
-  getSearchHistory, clearSearchHistory,
+  getSearchHistory, addSearchHistory, clearSearchHistory,
   sendTestDailyEmail,
   recordBehavioralEvent, getBehaviorProfile, resetBehaviorLearning,
   syncUser
@@ -36,6 +36,7 @@ router.post('/medical',             upload.single('report'), uploadMedicalReport
 router.delete('/medical/:reportId', deleteMedicalReport);
 
 router.get('/search-history',    getSearchHistory);
+router.post('/search-history',   addSearchHistory);
 router.delete('/search-history', clearSearchHistory);
 
 // ── Phase 5: Behavioral Learning & Preference Control Endpoints ──

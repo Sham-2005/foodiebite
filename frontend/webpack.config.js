@@ -3,28 +3,85 @@ const HtmlWebpackPlugin = require('html-webpack-plugin');
 const webpack = require('webpack');
 const fs = require('fs');
 
-// Simple helper to load environment variables from .env if present
-const dotenvPath = path.resolve(__dirname, '.env');
+// Robust environment variable loader supporting frontend/.env and root .env
+const frontendDotenv = path.resolve(__dirname, '.env');
+const rootDotenv = path.resolve(__dirname, '../.env');
 const env = {};
-if (fs.existsSync(dotenvPath)) {
-  const content = fs.readFileSync(dotenvPath, 'utf-8');
-  content.split('\n').forEach(line => {
-    const matched = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+
+function parseEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const content = fs.readFileSync(filePath, 'utf-8');
+  content.split(/\r?\n/).forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const matched = trimmed.match(/^([\w.-]+)\s*=\s*(.*)?$/);
     if (matched) {
       const key = matched[1];
-      let value = matched[2] || '';
-      if (value.startsWith('"') && value.endsWith('"')) {
-        value = value.substring(1, value.length - 1);
+      let value = (matched[2] || '').trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.substring(1, value.length - 1).trim();
       }
       env[key] = value;
     }
   });
 }
 
+// 1. Load root .env (base)
+parseEnvFile(rootDotenv);
+// 2. Load frontend .env (overrides root)
+parseEnvFile(frontendDotenv);
+
+// 3. Mirror NEXT_PUBLIC_ and REACT_APP_ Supabase aliases for seamless interoperability
+const resolvedSupabaseUrl =
+  env.NEXT_PUBLIC_SUPABASE_URL ||
+  env.REACT_APP_SUPABASE_URL ||
+  (process.env && process.env.NEXT_PUBLIC_SUPABASE_URL) ||
+  (process.env && process.env.REACT_APP_SUPABASE_URL) ||
+  '';
+
+const resolvedSupabaseKey =
+  env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  env.REACT_APP_SUPABASE_PUBLISHABLE_KEY ||
+  env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  env.REACT_APP_SUPABASE_ANON_KEY ||
+  (process.env && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) ||
+  (process.env && process.env.REACT_APP_SUPABASE_PUBLISHABLE_KEY) ||
+  '';
+
+if (resolvedSupabaseUrl) {
+  env.NEXT_PUBLIC_SUPABASE_URL = resolvedSupabaseUrl;
+  env.REACT_APP_SUPABASE_URL = resolvedSupabaseUrl;
+}
+if (resolvedSupabaseKey) {
+  env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = resolvedSupabaseKey;
+  env.REACT_APP_SUPABASE_PUBLISHABLE_KEY = resolvedSupabaseKey;
+  env.NEXT_PUBLIC_SUPABASE_ANON_KEY = resolvedSupabaseKey;
+  env.REACT_APP_SUPABASE_ANON_KEY = resolvedSupabaseKey;
+}
+
 const envKeys = Object.keys(env).reduce((prev, next) => {
   prev[`process.env.${next}`] = JSON.stringify(env[next]);
   return prev;
 }, {});
+
+// Guarantee fallback definitions for all expected Supabase keys so no unreplaced identifier throws at runtime
+const supabaseKeys = [
+  'NEXT_PUBLIC_SUPABASE_URL',
+  'REACT_APP_SUPABASE_URL',
+  'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
+  'REACT_APP_SUPABASE_PUBLISHABLE_KEY',
+  'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+  'REACT_APP_SUPABASE_ANON_KEY',
+];
+supabaseKeys.forEach(k => {
+  const fullKey = `process.env.${k}`;
+  if (!envKeys[fullKey]) {
+    envKeys[fullKey] = JSON.stringify('');
+  }
+});
 
 module.exports = {
   entry: path.resolve(__dirname, 'index.web.js'),
@@ -110,12 +167,15 @@ module.exports = {
     }),
     new webpack.DefinePlugin({
       ...envKeys,
+      'process.env': JSON.stringify(env),
       __DEV__: JSON.stringify(process.env.NODE_ENV !== 'production')
     })
   ],
   resolve: {
     alias: {
       'react-native$': 'react-native-web',
+      // Stub out native-only Google Sign-In on Web so it never leaks into webpack
+      '@react-native-google-signin/google-signin$': path.resolve(__dirname, 'src/services/googleSigninWebStub.js'),
       // react-native-image-picker: keep alias so any remaining import still gets the web mock
       'react-native-image-picker$': path.resolve(__dirname, 'src/services/imagePickerMock.js'),
       // react-native-document-picker: native-only module — stub it out for the web bundle

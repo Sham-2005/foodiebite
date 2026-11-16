@@ -82,7 +82,13 @@ export default function CompleteProfileScreen() {
         };
         setUser(completedUser);
         setToast({ type: 'success', msg: 'Profile completed successfully! Redirecting...' });
-        setTimeout(() => navigation.navigate('Home'), 1200);
+        setTimeout(() => {
+          if (typeof window !== 'undefined' && window.location) {
+            window.location.href = '/home';
+          } else {
+            navigation.navigate('Home');
+          }
+        }, 1000);
       } else {
         throw new Error('Failed to update profile records.');
       }

@@ -1,7 +1,18 @@
 // ─────────────────────────────────────────────────────────────
 //  src/services/localStorageService.js
-//  Unified LocalStorage Service for offline sessions, preferences, and usage analytics
+//  Unified Storage Service for offline sessions, preferences, and usage analytics
+//  Backwards-compatible API backed by platform-specific storage abstraction
 // ─────────────────────────────────────────────────────────────
+
+import storage, {
+  getItemSync,
+  setItemSync,
+  removeItemSync,
+  getJSONSync,
+  getItem,
+  setItem,
+  removeItem
+} from './storage.js';
 
 const SESSION_KEY = 'fb_user_session';
 const PREFS_KEY = 'fb_user_preferences';
@@ -22,27 +33,23 @@ export function saveSession(user) {
     uid: user.uid || user.id,
     email: user.email,
     displayName: user.name || user.displayName || 'FoodieBite User',
-    // Persist these so VerificationGuard doesn't redirect on refresh
-    // before the full Firebase profile finishes loading.
     age: user.age || null,
     gender: user.gender || null,
     profileCompleted: !!(user.age && user.gender),
     expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 Days
   };
-  localStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
+  setItemSync(SESSION_KEY, JSON.stringify(sessionData));
 
-  // Also save the token locally
   if (user.token) {
-    localStorage.setItem('nb_token', user.token);
+    setItemSync('nb_token', user.token);
   }
 }
 
 export function getSession() {
-  const data = localStorage.getItem(SESSION_KEY);
-  if (!data) return null;
+  const session = getJSONSync(SESSION_KEY, null);
+  if (!session) return null;
 
   try {
-    const session = JSON.parse(data);
     if (Date.now() > session.expiresAt) {
       clearSession();
       return null;
@@ -54,13 +61,38 @@ export function getSession() {
   }
 }
 
+export async function getSessionAsync() {
+  const data = await getItem(SESSION_KEY);
+  if (!data) return null;
+
+  try {
+    const session = JSON.parse(data);
+    if (Date.now() > session.expiresAt) {
+      await clearSessionAsync();
+      return null;
+    }
+    return session;
+  } catch (err) {
+    console.error('Failed to parse session cache:', err);
+    return null;
+  }
+}
+
 export function clearSession() {
-  localStorage.removeItem(SESSION_KEY);
-  localStorage.removeItem('nb_token');
-  // Optional: clear thread history
-  const active = JSON.parse(localStorage.getItem('nb_mock_active'));
+  removeItemSync(SESSION_KEY);
+  removeItemSync('nb_token');
+  const active = getJSONSync('nb_mock_active', null);
   if (active) {
-    localStorage.removeItem('nb_mock_active');
+    removeItemSync('nb_mock_active');
+  }
+}
+
+export async function clearSessionAsync() {
+  await removeItem(SESSION_KEY);
+  await removeItem('nb_token');
+  const activeStr = await getItem('nb_mock_active');
+  if (activeStr) {
+    await removeItem('nb_mock_active');
   }
 }
 
@@ -68,7 +100,7 @@ export function refreshSessionExpiration() {
   const session = getSession();
   if (session) {
     session.expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    setItemSync(SESSION_KEY, JSON.stringify(session));
   }
 }
 
@@ -76,11 +108,19 @@ export function refreshSessionExpiration() {
  * Preferences Persistence
  */
 export function savePreferences(prefs) {
-  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  setItemSync(PREFS_KEY, JSON.stringify(prefs));
+}
+
+export async function savePreferencesAsync(prefs) {
+  await setItem(PREFS_KEY, JSON.stringify(prefs));
 }
 
 export function getPreferences() {
-  const data = localStorage.getItem(PREFS_KEY);
+  return getJSONSync(PREFS_KEY, null);
+}
+
+export async function getPreferencesAsync() {
+  const data = await getItem(PREFS_KEY);
   return data ? JSON.parse(data) : null;
 }
 
@@ -88,11 +128,11 @@ export function getPreferences() {
  * Thread Persistence
  */
 export function saveLastActiveThread(uid, threadId) {
-  localStorage.setItem(`${THREAD_KEY}_${uid}`, threadId);
+  setItemSync(`${THREAD_KEY}_${uid}`, threadId);
 }
 
 export function getLastActiveThread(uid) {
-  return localStorage.getItem(`${THREAD_KEY}_${uid}`) || 'default';
+  return getItemSync(`${THREAD_KEY}_${uid}`) || 'default';
 }
 
 /**
@@ -100,8 +140,7 @@ export function getLastActiveThread(uid) {
  */
 function trackItem(key, itemId, itemData = {}) {
   try {
-    const data = localStorage.getItem(key);
-    const stats = data ? JSON.parse(data) : {};
+    const stats = getJSONSync(key, {});
 
     if (stats[itemId]) {
       stats[itemId].count += 1;
@@ -115,7 +154,7 @@ function trackItem(key, itemId, itemData = {}) {
         data: itemData
       };
     }
-    localStorage.setItem(key, JSON.stringify(stats));
+    setItemSync(key, JSON.stringify(stats));
   } catch (err) {
     console.error(`Failed to track usage stats for ${key}:`, err);
   }
@@ -174,10 +213,9 @@ export function getFrequentItems(type, limit = 10) {
   if (!key) return [];
 
   try {
-    const data = localStorage.getItem(key);
-    if (!data) return [];
+    const stats = getJSONSync(key, null);
+    if (!stats) return [];
 
-    const stats = JSON.parse(data);
     return Object.values(stats)
       .sort((a, b) => b.count - a.count)
       .slice(0, limit);
@@ -192,8 +230,7 @@ export function getFrequentItems(type, limit = 10) {
  */
 export function saveChatHistory(threadId, messages) {
   try {
-    const backupStr = localStorage.getItem('chat_threads') || '{}';
-    const backup = JSON.parse(backupStr);
+    const backup = getJSONSync('chat_threads', {});
     
     backup[threadId] = messages.map(m => ({
       id: m.id,
@@ -210,7 +247,7 @@ export function saveChatHistory(threadId, messages) {
       if (backup[key].length === 0) delete backup[key];
     }
 
-    localStorage.setItem('chat_threads', JSON.stringify(backup));
+    setItemSync('chat_threads', JSON.stringify(backup));
   } catch (err) {
     console.error('Failed to save chat history to local storage:', err);
   }
@@ -218,8 +255,7 @@ export function saveChatHistory(threadId, messages) {
 
 export function loadChatHistory(threadId) {
   try {
-    const backupStr = localStorage.getItem('chat_threads') || '{}';
-    const backup = JSON.parse(backupStr);
+    const backup = getJSONSync('chat_threads', {});
     const tMsgs = backup[threadId] || [];
     return tMsgs.map(m => ({
       id: m.id,
@@ -235,3 +271,24 @@ export function loadChatHistory(threadId) {
   }
 }
 
+export default {
+  saveSession,
+  getSession,
+  getSessionAsync,
+  clearSession,
+  clearSessionAsync,
+  refreshSessionExpiration,
+  savePreferences,
+  savePreferencesAsync,
+  getPreferences,
+  getPreferencesAsync,
+  saveLastActiveThread,
+  getLastActiveThread,
+  trackViewedFood,
+  trackSearchedFood,
+  trackScannedFood,
+  trackSelectedRecommendation,
+  getFrequentItems,
+  saveChatHistory,
+  loadChatHistory
+};

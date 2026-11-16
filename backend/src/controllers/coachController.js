@@ -1,4 +1,5 @@
 const { getFirestoreDb } = require('../config/firebase');
+const { getUserSupabaseClient, getSupabaseClient, getSupabaseAdmin } = require('../config/supabase');
 const { generateResponse } = require('../services/foodieBiteAIService');
 const { buildUserFoodProfile } = require('../services/profileBuilder');
 const { buildMedicalContextSummary } = require('../ai/medicalReportContext');
@@ -7,7 +8,12 @@ const { getBehavioralProfileSync } = require('../services/behaviorLearningServic
 const { trackFeatureUsage } = require('../services/activityTrackingService');
 
 // ── Timeout constants ────────────────────────────────────────
-const FIRESTORE_WRITE_TIMEOUT_MS = 3000;
+const FIRESTORE_WRITE_TIMEOUT_MS = 2000;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isValidUUID(str) {
+  return typeof str === 'string' && UUID_REGEX.test(str.trim());
+}
 
 // ── Helper: resolve with { timedOut:true } after N ms ───────
 function withTimeout(promise, ms, label) {
@@ -159,16 +165,47 @@ exports.handleChatMessage = async (req, res, next) => {
     sanitizedMsg = message.trim().substring(0, 2000);
   }
 
+  const client = (req.token ? getUserSupabaseClient(req.token) : null) || getSupabaseAdmin() || getSupabaseClient();
   const db = getDb();
   let userProfile = {};
   let userPrefs = {};
 
-  // 2. Load User Profile from Firestore (with 1500ms hard timeout protection)
-  if (db) {
+  // 2. Load User Profile (Supabase PostgreSQL first, then userStore / Firestore fallback)
+  if (client && isValidUUID(userId)) {
+    try {
+      const { data: prof } = await client
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (prof) {
+        userProfile = {
+          ...prof,
+          dietType: prof.diet_type || prof.preferences?.dietType,
+          preferences: prof.preferences || {}
+        };
+        userPrefs = userProfile.preferences || {};
+      }
+    } catch (err) {
+      console.warn('⚠️ Supabase profile load warning:', err.message);
+    }
+  }
+
+  if (!userProfile.id && !userProfile.name) {
+    const userStore = require('../services/userStore');
+    const local = userStore.findById(userId) || (req.user?.email ? userStore.findByEmail(req.user.email) : null);
+    if (local) {
+      userProfile = local;
+      userPrefs = local.preferences || {};
+    }
+  }
+
+  if (!userProfile.id && !userProfile.name && db) {
     try {
       const userDocResult = await withTimeout(
         db.collection('users').doc(userId).get(),
-        1500,
+        1000,
         'loadUserProfile'
       );
       if (userDocResult && !userDocResult.__timedOut && userDocResult.exists) {
@@ -176,14 +213,82 @@ exports.handleChatMessage = async (req, res, next) => {
         userPrefs = userProfile.preferences || {};
       }
     } catch (err) {
-      console.warn('⚠️ User profile load warning:', err.message);
+      console.warn('⚠️ Firestore profile load warning:', err.message);
     }
   }
   console.log(`[COACH] profile loaded +${Date.now() - reqStart}ms`);
 
-  // 3. Load Recent Conversation History (with 1500ms hard timeout protection)
+  // 3. Resolve Thread & Load Recent Conversation History (Supabase coach_threads & coach_messages)
+  let resolvedThreadId = null;
   const conversationHistory = [];
-  if (db) {
+
+  if (client && isValidUUID(userId)) {
+    try {
+      if (isValidUUID(tId)) {
+        const { data: existingThread } = await client
+          .from('coach_threads')
+          .select('id')
+          .eq('id', tId)
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (existingThread) {
+          resolvedThreadId = existingThread.id;
+        }
+      }
+
+      if (!resolvedThreadId) {
+        const { data: latestThread } = await client
+          .from('coach_threads')
+          .select('id')
+          .eq('user_id', userId)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (latestThread) {
+          resolvedThreadId = latestThread.id;
+        } else {
+          const { data: newThread } = await client
+            .from('coach_threads')
+            .insert({
+              user_id: userId,
+              title: 'Nutrition Consultation'
+            })
+            .select('id')
+            .maybeSingle();
+
+          if (newThread) {
+            resolvedThreadId = newThread.id;
+          }
+        }
+      }
+
+      if (resolvedThreadId) {
+        const { data: msgs } = await client
+          .from('coach_messages')
+          .select('sender, text, message_type, options, created_at')
+          .eq('thread_id', resolvedThreadId)
+          .order('created_at', { ascending: true })
+          .limit(6);
+
+        if (msgs && msgs.length > 0) {
+          msgs.forEach(m => {
+            if (m.text && m.sender) {
+              conversationHistory.push({
+                sender: m.sender,
+                text: m.text
+              });
+            }
+          });
+        }
+      }
+    } catch (sbChatErr) {
+      console.warn('⚠️ Supabase thread/history load warning:', sbChatErr.message);
+    }
+  }
+
+  // Fallback to Firestore conversation history if empty
+  if (conversationHistory.length === 0 && db) {
     try {
       const messagesRef = db
         .collection('users').doc(userId)
@@ -192,7 +297,7 @@ exports.handleChatMessage = async (req, res, next) => {
 
       const snapResult = await withTimeout(
         messagesRef.orderBy('timestamp', 'asc').limitToLast(6).get(),
-        1500,
+        1000,
         'loadConversationHistory'
       );
       if (snapResult && !snapResult.__timedOut && snapResult.forEach) {
@@ -207,7 +312,7 @@ exports.handleChatMessage = async (req, res, next) => {
         });
       }
     } catch (err) {
-      console.warn('⚠️ Conversation history load warning:', err.message);
+      console.warn('⚠️ Firestore history load warning:', err.message);
     }
   }
   console.log(`[COACH] history loaded +${Date.now() - reqStart}ms`);
@@ -260,51 +365,100 @@ exports.handleChatMessage = async (req, res, next) => {
   const replyText = aiResult.reply || (isSuccess ? 'FoodieBite AI generated an empty response.' : 'FoodieBite AI is temporarily unavailable. Please try again.');
   const options = Array.isArray(aiResult.options) ? aiResult.options : [];
   const type = aiResult.type || (isSuccess ? (options.length > 0 ? 'choice' : 'text') : 'error');
-  const sessionId = `${userId}_${tId}`;
+  const actualThreadId = resolvedThreadId || tId;
+  const sessionId = `${userId}_${actualThreadId}`;
 
-  // 6. Save User & AI messages to Firestore (User-Scoped) - only if success or user msg
+  // 6. Save User & AI messages to Supabase PostgreSQL (and Firestore fallback)
   let persisted = false;
+  if (client && resolvedThreadId && isValidUUID(userId) && isSuccess) {
+    try {
+      console.log(`[COACH] persisting messages to Supabase +${Date.now() - reqStart}ms`);
+      const validTypes = ['text', 'choice', 'alert', 'meal_suggestion'];
+      const safeMsgType = validTypes.includes(type) ? type : 'text';
+
+      const { error: msgErr } = await client
+        .from('coach_messages')
+        .insert([
+          {
+            thread_id: resolvedThreadId,
+            user_id: userId,
+            sender: 'user',
+            text: sanitizedMsg,
+            message_type: 'text',
+            options: []
+          },
+          {
+            thread_id: resolvedThreadId,
+            user_id: userId,
+            sender: 'coach',
+            text: replyText,
+            message_type: safeMsgType,
+            options: options
+          }
+        ]);
+
+      if (!msgErr) {
+        persisted = true;
+        client
+          .from('coach_threads')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', resolvedThreadId)
+          .then(() => {})
+          .catch(() => {});
+      } else {
+        console.warn('⚠️ Supabase coach messages insert warning:', msgErr.message);
+      }
+    } catch (sbSaveErr) {
+      console.warn('⚠️ Supabase coach persistence failed:', sbSaveErr.message);
+    }
+  }
+
+  // Asynchronous / timed Firestore persistence backup
   if (db && isSuccess) {
-    console.log(`[COACH] persisting user message +${Date.now() - reqStart}ms`);
-    const messagesRef = db
-      .collection('users').doc(userId)
-      .collection('threads').doc(tId)
-      .collection('messages');
+    try {
+      const messagesRef = db
+        .collection('users').doc(userId)
+        .collection('threads').doc(actualThreadId)
+        .collection('messages');
 
-    const userMsgRef = messagesRef.doc();
-    const coachMsgRef = messagesRef.doc();
+      const userMsgRef = messagesRef.doc();
+      const coachMsgRef = messagesRef.doc();
 
-    const saveUser = withTimeout(
-      userMsgRef.set({
-        id: userMsgRef.id,
-        sender: 'user',
-        text: message.trim(),
-        timestamp: new Date().toISOString(),
-        source: 'user',
-        confidence: 1.0
-      }),
-      FIRESTORE_WRITE_TIMEOUT_MS,
-      'saveUserMsg'
-    );
+      const saveUser = withTimeout(
+        userMsgRef.set({
+          id: userMsgRef.id,
+          sender: 'user',
+          text: message.trim(),
+          timestamp: new Date().toISOString(),
+          source: 'user',
+          confidence: 1.0
+        }),
+        FIRESTORE_WRITE_TIMEOUT_MS,
+        'saveUserMsg'
+      );
 
-    const saveCoach = withTimeout(
-      coachMsgRef.set({
-        id: coachMsgRef.id,
-        sender: 'coach',
-        text: replyText,
-        options,
-        type,
-        timestamp: new Date().toISOString(),
-        source: responseSource,
-        confidence: 1.0
-      }),
-      FIRESTORE_WRITE_TIMEOUT_MS,
-      'saveCoachMsg'
-    );
+      const saveCoach = withTimeout(
+        coachMsgRef.set({
+          id: coachMsgRef.id,
+          sender: 'coach',
+          text: replyText,
+          options,
+          type,
+          timestamp: new Date().toISOString(),
+          source: responseSource,
+          confidence: 1.0
+        }),
+        FIRESTORE_WRITE_TIMEOUT_MS,
+        'saveCoachMsg'
+      );
 
-    const [userSaveResult, coachSaveResult] = await Promise.allSettled([saveUser, saveCoach]);
-    if (userSaveResult.status === 'fulfilled' && coachSaveResult.status === 'fulfilled') {
-      persisted = true;
+      Promise.allSettled([saveUser, saveCoach]).then(([uRes, cRes]) => {
+        if (!persisted && uRes.status === 'fulfilled' && cRes.status === 'fulfilled') {
+          persisted = true;
+        }
+      });
+    } catch (fbSaveErr) {
+      console.warn('⚠️ Firestore coach backup notice:', fbSaveErr.message);
     }
   }
 
@@ -321,7 +475,7 @@ exports.handleChatMessage = async (req, res, next) => {
     type,
     options,
     sessionId,
-    threadId: tId,
+    threadId: actualThreadId,
     persisted,
     nearbyIntent: aiResult.nearbyIntent,
     _timing: { totalMs },

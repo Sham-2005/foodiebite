@@ -46,6 +46,7 @@ import {
   findDatabaseMatches
 } from '../services/nutritionOcrService';
 import { FALLBACK_FOODS } from '../data/fallbackFoods';
+import { launchCamera, launchImageLibrary } from '../services/filePicker';
 
 // Helper to convert any database food item into structured nutrients map
 function convertFoodToNutrients(food) {
@@ -131,10 +132,32 @@ export default function NutritionScannerScreen() {
     }
   }, [scanResult, editedNutrients, isEditing, scaleMultiplier]);
 
-  // ── Camera Handlers ─────────────────────────────────────────
+  // ── Camera & Gallery Handlers ──────────────────────────────
   const startCamera = async () => {
     setCameraError(null);
     setOcrError(null);
+
+    if (Platform.OS !== 'web') {
+      try {
+        const res = await launchCamera({ mediaType: 'photo' });
+        if (res.didCancel && !res.error) return;
+        if (res.error) {
+          setCameraError(res.error);
+          return;
+        }
+        if (res.assets && res.assets.length > 0) {
+          const asset = res.assets[0];
+          setImageFileName(asset.fileName || `camera_${Date.now()}.jpg`);
+          setImageFileSize(asset.fileSize || 0);
+          setSelectedImage(asset.uri);
+          triggerOcrProcessing(asset.uri);
+        }
+      } catch (err) {
+        setCameraError(err.message || 'Failed to capture camera photo.');
+      }
+      return;
+    }
+
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setCameraError('Camera access is not supported in this browser. Please upload an image file instead.');
       return;
@@ -158,6 +181,36 @@ export default function NutritionScannerScreen() {
       } else {
         setCameraError('Unable to connect to camera. Please upload an image instead.');
       }
+    }
+  };
+
+  const handleUploadPress = async () => {
+    setCameraError(null);
+    setOcrError(null);
+
+    if (Platform.OS === 'web') {
+      if (fileInputRef.current) {
+        fileInputRef.current.click();
+      }
+      return;
+    }
+
+    try {
+      const res = await launchImageLibrary({ mediaType: 'photo' });
+      if (res.didCancel && !res.error) return;
+      if (res.error) {
+        setCameraError(res.error);
+        return;
+      }
+      if (res.assets && res.assets.length > 0) {
+        const asset = res.assets[0];
+        setImageFileName(asset.fileName || `image_${Date.now()}.jpg`);
+        setImageFileSize(asset.fileSize || 0);
+        setSelectedImage(asset.uri);
+        triggerOcrProcessing(asset.uri);
+      }
+    } catch (err) {
+      setCameraError(err.message || 'Failed to select image from gallery.');
     }
   };
 
@@ -445,7 +498,8 @@ No nutritional label present
             <TouchableOpacity 
               onPress={handleReset} 
               style={styles.headerResetBtn}
-              accessibilityLabel="Scan another food"
+              role="button"
+              aria-label="Scan another food"
             >
               <RefreshCw size={14} color={C.orange} style={{ marginRight: 4 }} />
               <Text style={styles.headerResetText}>Reset</Text>
@@ -513,7 +567,8 @@ No nutritional label present
               <TouchableOpacity 
                 onPress={captureCameraFrame} 
                 style={styles.captureBtn}
-                accessibilityLabel="Capture photo of food label"
+                role="button"
+                aria-label="Capture photo of food label"
               >
                 <Camera size={18} color="#fff" style={{ marginRight: 6 }} />
                 <Text style={styles.captureBtnText}>Capture & Scan</Text>
@@ -531,8 +586,8 @@ No nutritional label present
                 onPress={startCamera}
                 style={styles.inputActionCard}
                 activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel="Scan with Camera"
+                role="button"
+                aria-label="Scan with Camera"
               >
                 <View style={[styles.inputIconCircle, { backgroundColor: 'rgba(255, 107, 53, 0.15)' }]}>
                   <Camera size={26} color={C.orange} />
@@ -543,11 +598,11 @@ No nutritional label present
 
               {/* Upload Image Button */}
               <TouchableOpacity
-                onPress={() => fileInputRef.current && fileInputRef.current.click()}
+                onPress={handleUploadPress}
                 style={styles.inputActionCard}
                 activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel="Upload Food Label Image"
+                role="button"
+                aria-label="Upload Food Label Image"
               >
                 <View style={[styles.inputIconCircle, { backgroundColor: 'rgba(56, 189, 248, 0.15)' }]}>
                   <Upload size={26} color="#38BDF8" />
@@ -1014,8 +1069,8 @@ No nutritional label present
               <TouchableOpacity
                 onPress={handleReset}
                 style={styles.scanAnotherBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Scan another food label"
+                role="button"
+                aria-label="Scan another food label"
               >
                 <RefreshCw size={16} color="#fff" style={{ marginRight: 8 }} />
                 <Text style={styles.scanAnotherText}>Scan Another Food</Text>
@@ -1024,8 +1079,8 @@ No nutritional label present
               <TouchableOpacity
                 onPress={() => navigation.navigate('Home')}
                 style={styles.returnHomeBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Return to Home Page"
+                role="button"
+                aria-label="Return to Home Page"
               >
                 <Text style={styles.returnHomeText}>Return to Home</Text>
               </TouchableOpacity>
