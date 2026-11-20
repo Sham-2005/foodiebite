@@ -31,13 +31,13 @@ export default function PrivacyPolicyScreen() {
             </Text>
             <View style={styles.bulletList}>
               <Text style={styles.bulletItem}>
-                • <Text style={{ fontWeight: '700', color: '#fff' }}>Account Credentials</Text>: Email addresses, names, and passwords configured via Firebase Authentication.
+                • <Text style={{ fontWeight: '700', color: '#fff' }}>Account Credentials</Text>: Email addresses, names, and passwords configured via Supabase Authentication.
               </Text>
               <Text style={styles.bulletItem}>
-                • <Text style={{ fontWeight: '700', color: '#fff' }}>Dietary Profile</Text>: User-configured preferences, dietary selections, spice levels, allergens, and health goals saved in Cloud Firestore.
+                • <Text style={{ fontWeight: '700', color: '#fff' }}>Dietary Profile</Text>: User-configured preferences, dietary selections, spice levels, allergens, and health goals saved in Supabase PostgreSQL.
               </Text>
               <Text style={styles.bulletItem}>
-                • <Text style={{ fontWeight: '700', color: '#fff' }}>Medical Reports</Text>: User-uploaded health reports and documents stored securely in Firebase Storage.
+                • <Text style={{ fontWeight: '700', color: '#fff' }}>Medical Reports</Text>: User-uploaded health reports and documents stored securely in private Supabase Storage buckets.
               </Text>
             </View>
           </View>

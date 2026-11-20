@@ -1,16 +1,18 @@
 // ─────────────────────────────────────────────────────────────
 //  backend/src/services/restaurantRequestStore.js
-//  Persistence Store for Merchant Restaurant Requests & Approved Restaurants
-//  Supports Firestore synchronization with fast in-memory fallback
+//  FoodieBite — Restaurant Requests Store (Strict Supabase Single Source of Truth)
 // ─────────────────────────────────────────────────────────────
 
-const { getFirestoreDb } = require('../config/firebase');
+'use strict';
 
-// In-memory store fallback
-const requestsMap = new Map();
-const approvedRestaurantsMap = new Map();
+const { getSupabaseAdmin, getSupabaseClient } = require('../config/supabase');
 
-// Helper to sanitize strings against XSS / prompt injection
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function getClient() {
+  return getSupabaseAdmin() || getSupabaseClient();
+}
+
 function sanitizeString(str) {
   if (typeof str !== 'string') return str;
   return str
@@ -20,266 +22,272 @@ function sanitizeString(str) {
 }
 
 /**
- * Create a new restaurant addition request from a Merchant
+ * Create a new restaurant addition request
  */
 async function createRequest({ merchantId, merchantName, restaurantData }) {
-  if (!merchantId) {
-    throw new Error('Merchant ID is required.');
-  }
+  const client = getClient();
+  if (!client) throw new Error('Database client unavailable');
 
-  // Validate mandatory fields
   const name = sanitizeString(restaurantData.name);
   const address = sanitizeString(restaurantData.address);
   const phone = sanitizeString(restaurantData.phone);
   const cuisine = sanitizeString(restaurantData.cuisine);
-  const description = sanitizeString(restaurantData.description || '');
+  const email = sanitizeString(restaurantData.email || restaurantData.contactEmail || 'merchant@foodiebite.com');
 
   if (!name || !address || !cuisine) {
     throw new Error('Restaurant name, address, and cuisine are required.');
   }
 
-  const lat = parseFloat(restaurantData.latitude || restaurantData.lat || 13.0827);
-  const lng = parseFloat(restaurantData.longitude || restaurantData.lng || 80.2707);
+  const validOwnerId = (merchantId && UUID_REGEX.test(merchantId)) ? merchantId : null;
+  const cuisinesArr = Array.isArray(restaurantData.cuisines)
+    ? restaurantData.cuisines.map(sanitizeString)
+    : [cuisine];
 
-  if (isNaN(lat) || lat < -90 || lat > 90 || isNaN(lng) || lng < -180 || lng > 180) {
-    throw new Error('Valid latitude (-90 to 90) and longitude (-180 to 180) are required.');
+  const dietaryOfferings = Array.isArray(restaurantData.dietaryOptions)
+    ? restaurantData.dietaryOptions
+    : [restaurantData.dietaryOptions || 'vegetarian'];
+
+  const { data, error } = await client
+    .from('restaurant_requests')
+    .insert({
+      owner_id: validOwnerId,
+      restaurant_name: name,
+      cuisines: cuisinesArr,
+      address,
+      contact_phone: phone || '+91 9876543210',
+      contact_email: email,
+      dietary_offerings: dietaryOfferings,
+      status: 'pending',
+      created_at: new Date().toISOString()
+    })
+    .select('*')
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to submit restaurant request in Supabase: ${error.message}`);
   }
 
-  const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-  const submittedAt = new Date().toISOString();
-
-  const cleanedData = {
-    name,
-    address,
-    phone: phone || '+91 9876543210',
-    cuisine,
-    description,
-    latitude: lat,
-    longitude: lng,
-    lat,
-    lng,
-    openingHours: sanitizeString(restaurantData.openingHours || '10:00 AM - 10:00 PM'),
-    dietaryOptions: Array.isArray(restaurantData.dietaryOptions) 
-      ? restaurantData.dietaryOptions.map(sanitizeString) 
-      : [sanitizeString(restaurantData.dietaryOptions || 'vegetarian')],
-    menuInfo: sanitizeString(restaurantData.menuInfo || restaurantData.menu || '')
-  };
-
-  const newRequest = {
-    requestId,
-    id: requestId,
-    merchantId,
+  return {
+    id: data.id,
+    requestId: data.id,
+    merchantId: data.owner_id,
     merchantName: merchantName || 'Merchant',
-    restaurantData: cleanedData,
-    status: 'PENDING',
-    submittedAt,
-    reviewedAt: null,
-    reviewedBy: null,
-    rejectionReason: null
+    restaurantData: {
+      name: data.restaurant_name,
+      address: data.address,
+      phone: data.contact_phone,
+      cuisine: data.cuisines?.[0] || 'Multi-Cuisine',
+      cuisines: data.cuisines,
+      dietaryOptions: data.dietary_offerings
+    },
+    status: data.status.toUpperCase(),
+    submittedAt: data.created_at
   };
-
-  // 1. Save to in-memory store
-  requestsMap.set(requestId, newRequest);
-
-  // 2. Sync to Firestore if available
-  const db = getFirestoreDb();
-  if (db) {
-    try {
-      await db.collection('restaurantRequests').doc(requestId).set(newRequest);
-    } catch (err) {
-      console.warn('⚠️ Firestore restaurant request write skipped:', err.message);
-    }
-  }
-
-  return newRequest;
 }
 
 /**
- * Get all requests submitted by a specific merchant
+ * Get requests submitted by a merchant
  */
 async function getRequestsByMerchant(merchantId) {
-  const merchantRequests = [];
-  for (const req of requestsMap.values()) {
-    if (req.merchantId === merchantId) {
-      merchantRequests.push(req);
-    }
-  }
+  const client = getClient();
+  if (!client) return [];
 
-  // Attempt Firestore fetch
-  const db = getFirestoreDb();
-  if (db) {
-    try {
-      const snap = await db.collection('restaurantRequests').where('merchantId', '==', merchantId).get();
-      snap.forEach(doc => {
-        const data = doc.data();
-        if (!requestsMap.has(doc.id)) {
-          requestsMap.set(doc.id, data);
-          merchantRequests.push(data);
-        }
-      });
-    } catch (err) {
-      // safe fallback
-    }
-  }
+  const { data, error } = await client
+    .from('restaurant_requests')
+    .select('*')
+    .eq('owner_id', merchantId)
+    .order('created_at', { ascending: false });
 
-  return merchantRequests;
+  if (error) return [];
+
+  return (data || []).map(d => ({
+    id: d.id,
+    requestId: d.id,
+    merchantId: d.owner_id,
+    restaurantData: {
+      name: d.restaurant_name,
+      address: d.address,
+      phone: d.contact_phone,
+      cuisine: d.cuisines?.[0] || 'Multi-Cuisine',
+      cuisines: d.cuisines,
+      dietaryOptions: d.dietary_offerings
+    },
+    status: d.status.toUpperCase(),
+    rejectionReason: d.rejection_reason,
+    submittedAt: d.created_at,
+    reviewedAt: d.reviewed_at
+  }));
 }
 
 /**
- * Get a single restaurant request by ID
+ * Get single request by ID
  */
 async function getRequestById(requestId) {
-  if (requestsMap.has(requestId)) {
-    return requestsMap.get(requestId);
-  }
+  const client = getClient();
+  if (!client) return null;
 
-  const db = getFirestoreDb();
-  if (db) {
-    try {
-      const doc = await db.collection('restaurantRequests').doc(requestId).get();
-      if (doc.exists) {
-        const data = doc.data();
-        requestsMap.set(requestId, data);
-        return data;
-      }
-    } catch (err) {
-      // safe fallback
-    }
-  }
+  const { data, error } = await client
+    .from('restaurant_requests')
+    .select('*')
+    .eq('id', requestId)
+    .maybeSingle();
 
-  return null;
+  if (error || !data) return null;
+
+  return {
+    id: data.id,
+    requestId: data.id,
+    merchantId: data.owner_id,
+    restaurantData: {
+      name: data.restaurant_name,
+      address: data.address,
+      phone: data.contact_phone,
+      cuisine: data.cuisines?.[0] || 'Multi-Cuisine',
+      cuisines: data.cuisines,
+      dietaryOptions: data.dietary_offerings
+    },
+    status: data.status.toUpperCase(),
+    rejectionReason: data.rejection_reason,
+    submittedAt: data.created_at,
+    reviewedAt: data.reviewed_at
+  };
 }
 
 /**
- * Get all restaurant requests (for Admin) with optional status filter
+ * Get all requests (for Admin)
  */
 async function getAllRequests(statusFilter = null) {
-  const all = Array.from(requestsMap.values());
-  if (statusFilter) {
-    const norm = statusFilter.toUpperCase();
-    return all.filter(r => r.status === norm);
+  const client = getClient();
+  if (!client) return [];
+
+  let query = client.from('restaurant_requests').select('*').order('created_at', { ascending: false });
+  if (statusFilter && statusFilter !== 'all') {
+    query = query.eq('status', statusFilter.toLowerCase());
   }
-  return all;
+
+  const { data, error } = await query;
+  if (error) return [];
+
+  return (data || []).map(d => ({
+    id: d.id,
+    requestId: d.id,
+    merchantId: d.owner_id,
+    restaurantData: {
+      name: d.restaurant_name,
+      address: d.address,
+      phone: d.contact_phone,
+      cuisine: d.cuisines?.[0] || 'Multi-Cuisine',
+      cuisines: d.cuisines,
+      dietaryOptions: d.dietary_offerings
+    },
+    status: d.status.toUpperCase(),
+    rejectionReason: d.rejection_reason,
+    submittedAt: d.created_at,
+    reviewedAt: d.reviewed_at
+  }));
 }
 
 /**
- * Approve a pending restaurant request (Admin operation)
+ * Approve request
  */
 async function approveRequest(requestId, adminInfo = {}) {
-  const reqItem = await getRequestById(requestId);
-  if (!reqItem) {
-    throw new Error('Restaurant request not found.');
-  }
+  const client = getClient();
+  if (!client) throw new Error('Database client unavailable');
 
-  if (reqItem.status === 'APPROVED') {
-    return reqItem;
-  }
+  const now = new Date().toISOString();
+  const { data: updatedReq, error: reqErr } = await client
+    .from('restaurant_requests')
+    .update({
+      status: 'approved',
+      rejection_reason: null,
+      reviewed_at: now
+    })
+    .eq('id', requestId)
+    .select('*')
+    .single();
 
-  const reviewedAt = new Date().toISOString();
-  const reviewedBy = adminInfo.email || adminInfo.id || 'Admin';
+  if (reqErr) throw new Error(`Approval failed: ${reqErr.message}`);
 
-  reqItem.status = 'APPROVED';
-  reqItem.reviewedAt = reviewedAt;
-  reqItem.reviewedBy = reviewedBy;
-  reqItem.rejectionReason = null;
-
-  // Publish to Approved Restaurants dataset
-  const approvedRestaurant = {
-    id: `merchant_rest_${requestId}`,
-    requestId,
-    merchantId: reqItem.merchantId,
-    name: reqItem.restaurantData.name,
-    address: reqItem.restaurantData.address,
-    phone: reqItem.restaurantData.phone,
-    cuisine: reqItem.restaurantData.cuisine,
-    description: reqItem.restaurantData.description,
-    latitude: reqItem.restaurantData.latitude,
-    longitude: reqItem.restaurantData.longitude,
-    lat: reqItem.restaurantData.lat,
-    lng: reqItem.restaurantData.lng,
-    openingHours: reqItem.restaurantData.openingHours,
-    dietaryOptions: reqItem.restaurantData.dietaryOptions,
-    menuInfo: reqItem.restaurantData.menuInfo,
-    category: 'restaurant',
-    status: 'APPROVED',
+  // Insert into approved_restaurants
+  await client.from('approved_restaurants').upsert({
+    request_id: requestId,
+    name: updatedReq.restaurant_name,
+    cuisines: updatedReq.cuisines || [],
+    address: updatedReq.address,
     rating: 4.8,
-    isMerchantApproved: true,
-    approvedAt: reviewedAt,
-    approvedBy: reviewedBy
-  };
+    is_active: true,
+    dietary_tags: updatedReq.dietary_offerings || [],
+    created_at: now
+  }, { onConflict: 'request_id' }).catch(() => {});
 
-  approvedRestaurantsMap.set(approvedRestaurant.id, approvedRestaurant);
-  requestsMap.set(requestId, reqItem);
-
-  // Sync to Firestore if available
-  const db = getFirestoreDb();
-  if (db) {
-    try {
-      await db.collection('restaurantRequests').doc(requestId).set(reqItem);
-      await db.collection('approvedRestaurants').doc(approvedRestaurant.id).set(approvedRestaurant);
-    } catch (err) {
-      console.warn('⚠️ Firestore approval sync skipped:', err.message);
+  return {
+    id: updatedReq.id,
+    requestId: updatedReq.id,
+    status: 'APPROVED',
+    reviewedAt: now,
+    restaurantData: {
+      name: updatedReq.restaurant_name,
+      address: updatedReq.address
     }
-  }
-
-  return reqItem;
+  };
 }
 
 /**
- * Reject a pending restaurant request (Admin operation)
+ * Reject request
  */
 async function rejectRequest(requestId, adminInfo = {}, rejectionReason) {
-  const reqItem = await getRequestById(requestId);
-  if (!reqItem) {
-    throw new Error('Restaurant request not found.');
-  }
+  const client = getClient();
+  if (!client) throw new Error('Database client unavailable');
 
   const reason = sanitizeString(rejectionReason);
   if (!reason || reason.trim() === '') {
     throw new Error('A valid reason for rejection is required.');
   }
 
-  const reviewedAt = new Date().toISOString();
-  const reviewedBy = adminInfo.email || adminInfo.id || 'Admin';
+  const now = new Date().toISOString();
+  const { data: updatedReq, error: reqErr } = await client
+    .from('restaurant_requests')
+    .update({
+      status: 'rejected',
+      rejection_reason: reason,
+      reviewed_at: now
+    })
+    .eq('id', requestId)
+    .select('*')
+    .single();
 
-  reqItem.status = 'REJECTED';
-  reqItem.rejectionReason = reason;
-  reqItem.reviewedAt = reviewedAt;
-  reqItem.reviewedBy = reviewedBy;
+  if (reqErr) throw new Error(`Rejection failed: ${reqErr.message}`);
 
-  // Remove from approved map if previously approved
-  const approvedId = `merchant_rest_${requestId}`;
-  approvedRestaurantsMap.delete(approvedId);
-  requestsMap.set(requestId, reqItem);
+  // Remove from approved_restaurants if it was approved
+  await client.from('approved_restaurants').delete().eq('request_id', requestId).catch(() => {});
 
-  // Sync to Firestore if available
-  const db = getFirestoreDb();
-  if (db) {
-    try {
-      await db.collection('restaurantRequests').doc(requestId).set(reqItem);
-      await db.collection('approvedRestaurants').doc(approvedId).delete();
-    } catch (err) {
-      console.warn('⚠️ Firestore rejection sync skipped:', err.message);
-    }
-  }
-
-  return reqItem;
+  return {
+    id: updatedReq.id,
+    requestId: updatedReq.id,
+    status: 'REJECTED',
+    rejectionReason: reason,
+    reviewedAt: now
+  };
 }
 
 /**
- * Get all published APPROVED restaurants (visible to Users & Nearby Discovery)
+ * Get all published APPROVED restaurants
  */
 async function getApprovedRestaurants() {
-  return Array.from(approvedRestaurantsMap.values()).filter(r => r.status === 'APPROVED');
+  const client = getClient();
+  if (!client) return [];
+
+  const { data, error } = await client
+    .from('approved_restaurants')
+    .select('*')
+    .eq('is_active', true)
+    .order('rating', { ascending: false });
+
+  if (error) return [];
+  return data || [];
 }
 
-/**
- * Clear in-memory state (useful for test isolation)
- */
-function clearStore() {
-  requestsMap.clear();
-  approvedRestaurantsMap.clear();
-}
+function clearStore() {}
 
 module.exports = {
   createRequest,

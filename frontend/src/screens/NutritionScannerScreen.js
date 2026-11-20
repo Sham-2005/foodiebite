@@ -47,6 +47,17 @@ import {
 } from '../services/nutritionOcrService';
 import { FALLBACK_FOODS } from '../data/fallbackFoods';
 import { launchCamera, launchImageLibrary } from '../services/filePicker';
+import { resolveFoodImage } from '../services/foodHelpers';
+
+// Curated verified suggested foods displayed directly below upload section
+const SUGGESTED_SCANNER_FOODS = [
+  FALLBACK_FOODS.find(f => f.id === 'fb_oats_almond_milk') || FALLBACK_FOODS[0],
+  FALLBACK_FOODS.find(f => f.id === 'fb_moong_sprouts') || FALLBACK_FOODS[1],
+  FALLBACK_FOODS.find(f => f.name && f.name.toLowerCase().includes('chicken')) || FALLBACK_FOODS[2],
+  FALLBACK_FOODS.find(f => f.name && f.name.toLowerCase().includes('quinoa')) || FALLBACK_FOODS[3],
+  FALLBACK_FOODS.find(f => f.name && (f.name.toLowerCase().includes('paneer') || f.name.toLowerCase().includes('yogurt'))) || FALLBACK_FOODS[4],
+  FALLBACK_FOODS.find(f => f.name && f.name.toLowerCase().includes('salad')) || FALLBACK_FOODS[5],
+].filter(Boolean);
 
 // Helper to convert any database food item into structured nutrients map
 function convertFoodToNutrients(food) {
@@ -76,6 +87,10 @@ export default function NutritionScannerScreen() {
   const [selectedImage, setSelectedImage] = useState(null); // Data URL or object URL
   const [imageFileName, setImageFileName] = useState('');
   const [imageFileSize, setImageFileSize] = useState(null);
+  
+  // Image capture / upload confirmation preview state
+  const [pendingImage, setPendingImage] = useState(null); // { uri, fileName, fileSize, type }
+  const [navigatingFoodId, setNavigatingFoodId] = useState(null);
   
   // Camera stream state
   const [cameraActive, setCameraActive] = useState(false);
@@ -147,10 +162,17 @@ export default function NutritionScannerScreen() {
         }
         if (res.assets && res.assets.length > 0) {
           const asset = res.assets[0];
-          setImageFileName(asset.fileName || `camera_${Date.now()}.jpg`);
-          setImageFileSize(asset.fileSize || 0);
-          setSelectedImage(asset.uri);
-          triggerOcrProcessing(asset.uri);
+          const MAX_BYTES = 10 * 1024 * 1024;
+          if (asset.fileSize && asset.fileSize > MAX_BYTES) {
+            setCameraError(`Captured photo exceeds maximum limit of 10 MB (${(asset.fileSize / (1024 * 1024)).toFixed(1)} MB).`);
+            return;
+          }
+          setPendingImage({
+            uri: asset.uri,
+            fileName: asset.fileName || `camera_${Date.now()}.jpg`,
+            fileSize: asset.fileSize || 0,
+            type: asset.type || 'image/jpeg'
+          });
         }
       } catch (err) {
         setCameraError(err.message || 'Failed to capture camera photo.');
@@ -204,10 +226,17 @@ export default function NutritionScannerScreen() {
       }
       if (res.assets && res.assets.length > 0) {
         const asset = res.assets[0];
-        setImageFileName(asset.fileName || `image_${Date.now()}.jpg`);
-        setImageFileSize(asset.fileSize || 0);
-        setSelectedImage(asset.uri);
-        triggerOcrProcessing(asset.uri);
+        const MAX_BYTES = 10 * 1024 * 1024;
+        if (asset.fileSize && asset.fileSize > MAX_BYTES) {
+          setCameraError(`Selected image exceeds 10 MB (${(asset.fileSize / (1024 * 1024)).toFixed(1)} MB). Please select a smaller image.`);
+          return;
+        }
+        setPendingImage({
+          uri: asset.uri,
+          fileName: asset.fileName || `image_${Date.now()}.jpg`,
+          fileSize: asset.fileSize || 0,
+          type: asset.type || 'image/jpeg'
+        });
       }
     } catch (err) {
       setCameraError(err.message || 'Failed to select image from gallery.');
@@ -234,10 +263,12 @@ export default function NutritionScannerScreen() {
       const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
 
       stopCameraStream();
-      setSelectedImage(dataUrl);
-      setImageFileName(`camera_capture_${Date.now()}.jpg`);
-      setImageFileSize(Math.round(dataUrl.length * 0.75));
-      triggerOcrProcessing(dataUrl);
+      setPendingImage({
+        uri: dataUrl,
+        fileName: `camera_capture_${Date.now()}.jpg`,
+        fileSize: Math.round(dataUrl.length * 0.75),
+        type: 'image/jpeg'
+      });
     } catch (err) {
       console.error('Failed to capture frame:', err);
       setCameraError('Failed to capture camera photo. Try uploading an image.');
@@ -265,19 +296,75 @@ export default function NutritionScannerScreen() {
       return;
     }
 
-    setImageFileName(file.name);
-    setImageFileSize(file.size);
-
     const reader = new FileReader();
     reader.onload = (loadEvent) => {
       const dataUrl = loadEvent.target.result;
-      setSelectedImage(dataUrl);
-      triggerOcrProcessing(dataUrl);
+      setPendingImage({
+        uri: dataUrl,
+        fileName: file.name,
+        fileSize: file.size,
+        type: file.type || 'image/jpeg'
+      });
     };
     reader.onerror = () => {
       setOcrError('Failed to read image file. Please try another image.');
     };
     reader.readAsDataURL(file);
+  };
+
+  // ── Confirmation & Navigation Handlers ──────────────────────
+  const handleConfirmPendingImage = () => {
+    if (!pendingImage) return;
+    const img = pendingImage;
+    setPendingImage(null);
+    setImageFileName(img.fileName);
+    setImageFileSize(img.fileSize);
+    setSelectedImage(img.uri);
+    triggerOcrProcessing(img.uri);
+  };
+
+  const handleCancelPendingImage = () => {
+    setPendingImage(null);
+    setCameraError(null);
+    setOcrError(null);
+  };
+
+  const handleSuggestedFoodPress = (item) => {
+    if (!item) return;
+    try {
+      setNavigatingFoodId(item.id || item.name);
+      const safeFood = {
+        id: item.id || `item_${Date.now()}`,
+        name: item.name || item.displayName || 'Food Item',
+        calories: Number(item.calories) || 0,
+        protein: Number(item.protein) || 0,
+        carbs: Number(item.carbs) || 0,
+        fat: Number(item.fat) || 0,
+        fiber: Number(item.fiber) || 0,
+        sugar: Number(item.sugar) || 0,
+        sodium: Number(item.sodium) || 0,
+        grade: (item.grade || 'c').toLowerCase(),
+        healthScore: Number(item.healthScore) || 5.0,
+        healthGrade: item.healthGrade || 'C',
+        image: item.image || item.imageUrl || null,
+        allergens: Array.isArray(item.allergens) ? item.allergens.map(a => String(a)) : [],
+        labels: Array.isArray(item.labels) ? item.labels.map(l => String(l)) : [],
+        categories: Array.isArray(item.categories) ? item.categories : ['General'],
+        quantity: item.quantity || '100g',
+        dietTags: Array.isArray(item.dietTags) ? item.dietTags : [],
+      };
+
+      setTimeout(() => {
+        setNavigatingFoodId(null);
+        navigation.navigate('FoodDetail', {
+          id: safeFood.id,
+          food: safeFood,
+        });
+      }, 50);
+    } catch (err) {
+      console.warn('Navigation error:', err);
+      setNavigatingFoodId(null);
+    }
   };
 
   // Quick sample label loaders for testing
@@ -476,6 +563,8 @@ No nutritional label present
   const handleReset = () => {
     stopCameraStream();
     setSelectedImage(null);
+    setPendingImage(null);
+    setNavigatingFoodId(null);
     setImageFileName('');
     setImageFileSize(null);
     setScanResult(null);
@@ -577,8 +666,8 @@ No nutritional label present
           </View>
         )}
 
-        {/* Input Options (Camera / Upload / Preset Samples) */}
-        {!selectedImage && !cameraActive && (
+        {/* Input Options (Camera / Upload / Preset Samples / Suggested Foods) */}
+        {!selectedImage && !cameraActive && !pendingImage && (
           <View style={{ gap: 14 }}>
             <View style={styles.actionCardsRow}>
               {/* Camera Button */}
@@ -659,6 +748,115 @@ No nutritional label present
                   <Text style={styles.presetPillText}>🥗 Photo Without Label</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+
+            {/* Suggested Foods to View & Scan */}
+            <View style={styles.suggestedSection}>
+              <View style={styles.suggestedHeaderRow}>
+                <Sparkles size={16} color={C.orange} style={{ marginRight: 6 }} />
+                <Text style={styles.suggestedTitle}>Suggested Foods</Text>
+                {navigatingFoodId && (
+                  <ActivityIndicator size="small" color={C.orange} style={{ marginLeft: 8 }} />
+                )}
+              </View>
+              <Text style={styles.suggestedSubtitle}>
+                Tap any food below to inspect verified nutritional facts, health grade, and delivery:
+              </Text>
+
+              <View style={styles.suggestedGrid}>
+                {SUGGESTED_SCANNER_FOODS.map((food) => {
+                  const imgUri = resolveFoodImage(food);
+                  const isCurrentNavigating = navigatingFoodId === (food.id || food.name);
+                  return (
+                    <TouchableOpacity
+                      key={food.id || food.name}
+                      onPress={() => handleSuggestedFoodPress(food)}
+                      style={[
+                        styles.suggestedCard,
+                        isCurrentNavigating && { borderColor: C.orange, opacity: 0.85 }
+                      ]}
+                      activeOpacity={0.7}
+                      role="button"
+                      aria-label={`View details for ${food.name}`}
+                    >
+                      <View style={styles.suggestedImgContainer}>
+                        <Image
+                          source={{ uri: imgUri }}
+                          style={styles.suggestedImg}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.gradeBadgeOverlay}>
+                          <Text style={styles.gradeBadgeText}>Grade {(food.grade || 'A').toUpperCase()}</Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.suggestedInfo}>
+                        <Text style={styles.suggestedFoodName} numberOfLines={1}>
+                          {food.name}
+                        </Text>
+                        <Text style={styles.suggestedMacros}>
+                          🔥 {food.calories} kcal · 💪 {food.protein}g protein
+                        </Text>
+                        <View style={styles.suggestedViewRow}>
+                          <Text style={styles.suggestedViewText}>View Details</Text>
+                          {isCurrentNavigating ? (
+                            <ActivityIndicator size="small" color={C.orange} />
+                          ) : (
+                            <ChevronRight size={14} color={C.orange} />
+                          )}
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Image Preview & Confirmation (Retake / Confirm) */}
+        {pendingImage && !processing && !scanResult && (
+          <View style={styles.imagePreviewConfirmCard}>
+            <View style={styles.imagePreviewHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <CheckCircle size={16} color="#10B981" />
+                <Text style={styles.imagePreviewTitle}>Image Ready to Scan</Text>
+              </View>
+              <Text style={styles.imagePreviewMeta}>
+                {pendingImage.fileSize > 0 ? `${(pendingImage.fileSize / (1024 * 1024)).toFixed(2)} MB` : 'Photo'}
+              </Text>
+            </View>
+
+            <View style={styles.previewImageContainer}>
+              <Image
+                source={{ uri: pendingImage.uri }}
+                style={styles.previewImageFull}
+                resizeMode="contain"
+              />
+            </View>
+
+            <Text style={styles.previewFileName} numberOfLines={1}>
+              📷 {pendingImage.fileName}
+            </Text>
+
+            <View style={styles.previewActionsRow}>
+              <TouchableOpacity
+                onPress={handleCancelPendingImage}
+                style={styles.retakeBtn}
+                activeOpacity={0.8}
+              >
+                <RefreshCw size={16} color="#ff4d6d" style={{ marginRight: 6 }} />
+                <Text style={styles.retakeBtnText}>Retake / Choose Another</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleConfirmPendingImage}
+                style={styles.confirmAnalyzeBtn}
+                activeOpacity={0.8}
+              >
+                <Sparkles size={16} color="#fff" style={{ marginRight: 6 }} />
+                <Text style={styles.confirmAnalyzeBtnText}>Confirm & Analyze</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -1011,8 +1209,9 @@ No nutritional label present
                           </Text>
                         </View>
                         <TouchableOpacity
-                          onPress={() => navigation.navigate('FoodDetail', { food: item })}
+                          onPress={() => handleSuggestedFoodPress(item)}
                           style={styles.dbItemBtn}
+                          activeOpacity={0.8}
                         >
                           <Text style={styles.dbItemBtnText}>View Item</Text>
                         </TouchableOpacity>
@@ -1947,5 +2146,176 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     fontSize: 12
+  },
+
+  // ── Image Preview & Confirmation Styles ──
+  imagePreviewConfirmCard: {
+    backgroundColor: C.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    padding: 16,
+    gap: 12
+  },
+  imagePreviewHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  imagePreviewTitle: {
+    color: '#10B981',
+    fontWeight: '700',
+    fontSize: 14
+  },
+  imagePreviewMeta: {
+    color: C.muted,
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  previewImageContainer: {
+    height: 220,
+    backgroundColor: '#0c0e12',
+    borderRadius: 10,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: C.border
+  },
+  previewImageFull: {
+    width: '100%',
+    height: '100%'
+  },
+  previewFileName: {
+    color: '#ccc',
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center'
+  },
+  previewActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4
+  },
+  retakeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 77, 109, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 109, 0.35)',
+    paddingVertical: 12,
+    borderRadius: 10
+  },
+  retakeBtnText: {
+    color: '#ff4d6d',
+    fontWeight: '700',
+    fontSize: 12
+  },
+  confirmAnalyzeBtn: {
+    flex: 1.2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: C.orange,
+    paddingVertical: 12,
+    borderRadius: 10
+  },
+  confirmAnalyzeBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13
+  },
+
+  // ── Suggested Foods Styles ──
+  suggestedSection: {
+    backgroundColor: C.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 14,
+    gap: 10
+  },
+  suggestedHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  suggestedTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  suggestedSubtitle: {
+    color: C.muted,
+    fontSize: 11,
+    lineHeight: 16
+  },
+  suggestedGrid: {
+    gap: 10,
+    marginTop: 4
+  },
+  suggestedCard: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    overflow: 'hidden',
+    padding: 8,
+    gap: 10,
+    alignItems: 'center'
+  },
+  suggestedImgContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 8,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#0c0e12'
+  },
+  suggestedImg: {
+    width: '100%',
+    height: '100%'
+  },
+  gradeBadgeOverlay: {
+    position: 'absolute',
+    bottom: 2,
+    left: 2,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 3
+  },
+  gradeBadgeText: {
+    color: '#10B981',
+    fontSize: 8,
+    fontWeight: '800'
+  },
+  suggestedInfo: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 3
+  },
+  suggestedFoodName: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  suggestedMacros: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '500'
+  },
+  suggestedViewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    marginTop: 2
+  },
+  suggestedViewText: {
+    color: C.orange,
+    fontSize: 11,
+    fontWeight: '700'
   }
 });

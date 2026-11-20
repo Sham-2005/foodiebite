@@ -47,6 +47,63 @@ export async function requestCameraPermission() {
 }
 
 /**
+ * Request gallery / media permissions gracefully on Android.
+ * Checks READ_MEDIA_IMAGES for API 33+ (Android 13+), or READ_EXTERNAL_STORAGE for API <= 32.
+ */
+export async function requestGalleryPermission() {
+  if (Platform.OS !== 'android') return true;
+
+  try {
+    const apiLevel = Number(Platform.Version) || 30;
+
+    if (apiLevel >= 33) {
+      const alreadyGranted = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES
+      );
+      if (alreadyGranted) return true;
+
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+        {
+          title: 'Photo Library Permission',
+          message: 'FoodieBite needs photo library access to select nutrition labels and food images.',
+          buttonNeutral: 'Ask Later',
+          buttonNegative: 'Cancel',
+          buttonPositive: 'Allow',
+        }
+      );
+      return (
+        granted === PermissionsAndroid.RESULTS.GRANTED ||
+        granted === true
+      );
+    } else {
+      const alreadyGranted = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE
+      );
+      if (alreadyGranted) return true;
+
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+        {
+          title: 'Storage Permission',
+          message: 'FoodieBite needs storage access to select photos from your device storage.',
+          buttonNeutral: 'Ask Later',
+          buttonNegative: 'Cancel',
+          buttonPositive: 'Allow',
+        }
+      );
+      return (
+        granted === PermissionsAndroid.RESULTS.GRANTED ||
+        granted === true
+      );
+    }
+  } catch (err) {
+    console.warn('Gallery permission request error:', err);
+    return true; // continue gracefully to picker
+  }
+}
+
+/**
  * Launch device camera safely.
  * Returns { assets: [{ uri, fileName, type, fileSize }] } or { didCancel: true, error?: string }
  */
@@ -139,6 +196,9 @@ export async function launchImageLibrary(options = {}) {
     }
   }
 
+  // Request runtime gallery permissions gracefully for Android 13+ (READ_MEDIA_IMAGES) or Android 12- (READ_EXTERNAL_STORAGE)
+  await requestGalleryPermission();
+
   // 2. Image picking via react-native-image-picker
   if (RNImagePicker && typeof RNImagePicker.launchImageLibrary === 'function') {
     try {
@@ -207,4 +267,5 @@ export default {
   launchCamera,
   launchImageLibrary,
   requestCameraPermission,
+  requestGalleryPermission,
 };

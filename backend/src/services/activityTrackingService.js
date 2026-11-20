@@ -4,7 +4,7 @@
 //  Aggregates daily metrics and tracks real user active timestamps.
 // ─────────────────────────────────────────────────────────────
 
-const admin = require('firebase-admin');
+const { admin } = require('../config/firebase');
 const { getFirestoreDb } = require('../config/firebase');
 
 // In-memory cache for fast lookups & throttling

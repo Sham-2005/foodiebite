@@ -17,7 +17,7 @@ import {
   useWindowDimensions
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useNavigationState } from '@react-navigation/native';
 import {
   MapPin,
   Search as SearchIcon,
@@ -61,9 +61,15 @@ const RADII = [
   { label: '10 km', value: 10000 }
 ];
 
-export default function AppLayout({ children, noPadding, footer, hideNearby = false }) {
+export default function AppLayout({ children, noPadding, footer, hideNearby = false, isHome = false }) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const activeRouteName = useNavigationState(state => {
+    if (!state) return '';
+    const route = state.routes[state.index];
+    return route ? route.name : '';
+  });
+  const isHomeScreen = Boolean(isHome || activeRouteName === 'Home');
   const { preferences = {}, nearbyTrigger, setNearbyTrigger } = useApp();
 
   // Panel State
@@ -86,8 +92,9 @@ export default function AppLayout({ children, noPadding, footer, hideNearby = fa
   const [openNowFilter, setOpenNowFilter] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
 
-  // Listen for AI chat triggered searches
+  // Listen for AI chat triggered searches — exclusively handled on Home
   useEffect(() => {
+    if (!isHomeScreen) return;
     if (nearbyTrigger) {
       setPanelOpen(true);
       
@@ -124,7 +131,7 @@ export default function AppLayout({ children, noPadding, footer, hideNearby = fa
         acquireLocation();
       }
     }
-  }, [nearbyTrigger]);
+  }, [nearbyTrigger, isHomeScreen]);
 
   // Trigger search whenever location or filters change
   useEffect(() => {
@@ -240,8 +247,8 @@ export default function AppLayout({ children, noPadding, footer, hideNearby = fa
       </View>
       {footer !== undefined ? footer : <BottomNav />}
 
-      {/* Floating Action Buttons */}
-      {!hideNearby && !panelOpen && (
+      {/* Floating Action Buttons — Restrict Nearby Restaurant and Camera strictly to Home Page */}
+      {isHomeScreen && !hideNearby && !panelOpen && (
         <>
           <TouchableOpacity
             activeOpacity={0.85}
@@ -273,8 +280,8 @@ export default function AppLayout({ children, noPadding, footer, hideNearby = fa
         </>
       )}
 
-      {/* Discovery Drawer / Overlay panel */}
-      {panelOpen && (
+      {/* Discovery Drawer / Overlay panel — Exclusively accessible on Home page */}
+      {isHomeScreen && panelOpen && (
         <View style={[styles.overlayContainer, (isWeb && !isMobileView) ? styles.webOverlay : styles.mobileOverlay]}>
           
           {/* Header */}

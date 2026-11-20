@@ -19,7 +19,9 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
-  Platform
+  Platform,
+  Alert,
+  Linking
 } from 'react-native';
 import {
   LayoutDashboard,
@@ -178,7 +180,7 @@ export default function AdminIntelligenceSection() {
         setSegmentationData(res.model);
       }
     } catch (err) {
-      alert(`Model refresh failed: ${err.message}`);
+      Alert.alert('Admin Intelligence', `Model refresh failed: ${err.message}`);
     } finally {
       setRefreshingSeg(false);
     }
@@ -186,7 +188,7 @@ export default function AdminIntelligenceSection() {
 
   const handleCreateExperimentSubmit = async () => {
     if (!newExpName.trim()) {
-      alert('Please enter an experiment title.');
+      Alert.alert('Admin Intelligence', 'Please enter an experiment title.');
       return;
     }
     setCreatingExp(true);
@@ -204,7 +206,7 @@ export default function AdminIntelligenceSection() {
         loadSubTabData('experiments');
       }
     } catch (err) {
-      alert(`Failed to create experiment: ${err.message}`);
+      Alert.alert('Admin Intelligence', `Failed to create experiment: ${err.message}`);
     } finally {
       setCreatingExp(false);
     }
@@ -215,7 +217,7 @@ export default function AdminIntelligenceSection() {
       await apiUpdateExperimentStatus(id, status);
       loadSubTabData('experiments');
     } catch (err) {
-      alert(`Failed to update status: ${err.message}`);
+      Alert.alert('Admin Intelligence', `Failed to update status: ${err.message}`);
     }
   };
 
@@ -224,8 +226,12 @@ export default function AdminIntelligenceSection() {
       foodCategory: recCategoryFilter,
       recommendationStrategy: recStrategyFilter
     });
-    if (typeof window !== 'undefined') {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.open === 'function') {
       window.open(url, '_blank');
+    } else {
+      Linking.openURL(url).catch((err) => {
+        Alert.alert('Export CSV', `Could not open CSV link: ${err?.message || err}`);
+      });
     }
   };
 
@@ -1180,6 +1186,7 @@ const styles = StyleSheet.create({
   statusBadgeText: {
     fontSize: 10,
     fontWeight: '700',
+    color: '#F8FAFC',
   },
   feedbackBox: {
     flex: 1,
@@ -1193,6 +1200,7 @@ const styles = StyleSheet.create({
   feedbackValue: {
     fontSize: 22,
     fontWeight: '800',
+    color: '#F8FAFC',
   },
   feedbackLabel: {
     fontSize: 11,
@@ -1325,6 +1333,7 @@ const styles = StyleSheet.create({
   clusterBadgeText: {
     fontSize: 10,
     fontWeight: '700',
+    color: '#F8FAFC',
   },
   clusterDesc: {
     fontSize: 11,
@@ -1394,6 +1403,7 @@ const styles = StyleSheet.create({
   expStatusText: {
     fontSize: 9,
     fontWeight: '800',
+    color: '#F8FAFC',
   },
   expTitle: {
     fontSize: 15,
@@ -1450,6 +1460,7 @@ const styles = StyleSheet.create({
   verdictText: {
     fontSize: 12,
     fontWeight: '700',
+    color: '#F8FAFC',
   },
   verdictSub: {
     fontSize: 10,

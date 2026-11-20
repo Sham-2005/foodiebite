@@ -16,6 +16,12 @@ yarn-error.log*
 android/local.properties
 android/app/build/
 android/.gradle/
+android/app/src/main/assets/index.android.bundle*
+android/app/src/main/res/drawable-hdpi/
+android/app/src/main/res/drawable-mdpi/
+android/app/src/main/res/drawable-xhdpi/
+android/app/src/main/res/drawable-xxhdpi/
+android/app/src/main/res/drawable-xxxhdpi/
 android_backup*
 rn_migration_temp*
 *.apk

@@ -141,7 +141,7 @@ export const LOCAL_PRODUCTS = deduplicateFoods([...mappedFoodItems, ...mappedFal
 
 // ── Fetch products from Backend Proxy (Offline resilient) ───────────────────────
 export async function searchFoods(term, pageSize = 20, countryCode = 'in') {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     console.log('SearchFoods offline: serving from LOCAL_PRODUCTS');
     const matched = LOCAL_PRODUCTS.filter(p => 
       p.name.toLowerCase().includes(term.toLowerCase()) ||
@@ -172,7 +172,7 @@ export async function searchFoods(term, pageSize = 20, countryCode = 'in') {
 
 // ── Fetch single product by barcode (Offline resilient) ─────────────────────────
 export async function getProductById(barcode) {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     console.log('GetProductById offline: serving from LOCAL_PRODUCTS');
     const matched = LOCAL_PRODUCTS.find(p => p.id === barcode);
     return matched || LOCAL_PRODUCTS[0];
@@ -407,7 +407,7 @@ export function rankProductsForWeather(products, healthGoals = [], weather) {
 
 // ── Main entry: fetch recommendations ──────────────────────
 export async function getRecommendations(preferences, count = 20) {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     console.log('GetRecommendations offline: serving from LOCAL_PRODUCTS');
     const filtered = filterProducts(LOCAL_PRODUCTS, preferences);
     return filtered.slice(0, count);
@@ -446,7 +446,7 @@ export async function getRecommendations(preferences, count = 20) {
 
 // ── Search by query string (for Search screen) ──────────────
 export async function searchByQuery(query, preferences, count = 20) {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     console.log('SearchByQuery offline: serving from LOCAL_PRODUCTS');
     const matchedLocal = LOCAL_PRODUCTS.filter(p => 
       p.name.toLowerCase().includes(query.toLowerCase()) ||

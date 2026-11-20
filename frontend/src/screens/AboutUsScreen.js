@@ -11,9 +11,9 @@ export default function AboutUsScreen() {
     'Favorite foods',
     'AI nutrition assistant',
     'Daily health suggestions',
-    'Secure Firebase Authentication',
-    'Cloud Firestore Storage',
-    'Firebase Storage Medical Reports'
+    'Secure Supabase Authentication',
+    'Supabase PostgreSQL Database',
+    'Supabase Storage Medical Reports'
   ];
 
   const handleEmail = () => {

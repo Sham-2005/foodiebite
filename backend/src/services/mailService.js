@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────
 
 const { Resend } = require('resend');
-const admin = require('firebase-admin');
+const { admin } = require('../config/firebase');
 
 // ── Default Sender Address ────────────────────────────────────
 // Unverified Resend accounts must use onboarding@resend.dev
@@ -161,57 +161,11 @@ async function sendEmail({ to, subject, html, text, from }) {
 
 /**
  * Send Welcome Email to newly registered FoodieBite users
- * Enforces duplicate prevention via Firestore flag `welcomeEmailSent: true`
+ * Enforces single-send duplicate prevention via Supabase email_preferences & email_delivery_logs
  */
 async function sendWelcomeEmail(user) {
-  if (!user || !user.email) {
-    throw new Error('User object with valid email is required to send welcome email');
-  }
-
-  const cleanEmail = user.email.trim().toLowerCase();
-  const userName = user.name || cleanEmail.split('@')[0] || 'FoodieBite Explorer';
-  const userId = user.uid || user.id;
-
-  // 1. Duplicate Prevention: check in-memory flag or Firestore document
-  if (user.welcomeEmailSent === true) {
-    console.log(`ℹ️ [MailService] Welcome email already sent for user: ${cleanEmail}. Skipping duplicate.`);
-    return { success: true, skipped: true, reason: 'already_sent' };
-  }
-
-  const db = getFirestoreDb();
-  if (db && userId) {
-    try {
-      const userDoc = await db.collection('users').doc(userId).get();
-      if (userDoc.exists && userDoc.data().welcomeEmailSent === true) {
-        console.log(`ℹ️ [MailService] Firestore confirms welcome email already sent for ${userId}. Skipping duplicate.`);
-        return { success: true, skipped: true, reason: 'already_sent_firestore' };
-      }
-    } catch (checkErr) {
-      console.warn(`⚠️ [MailService] Could not check Firestore welcome status:`, checkErr.message);
-    }
-  }
-
-  // 2. Build Rich Welcome Email HTML
-  const { subject, html } = buildWelcomeEmailHtml(userName);
-
-  // 3. Dispatch via Resend
-  const result = await sendEmail({
-    to: cleanEmail,
-    subject,
-    html
-  });
-
-  // 4. Mark welcomeEmailSent: true in Firestore to avoid duplicate sends
-  if (db && userId) {
-    try {
-      await db.collection('users').doc(userId).set({ welcomeEmailSent: true }, { merge: true });
-      console.log(`✅ [MailService] Marked welcomeEmailSent: true for user ${userId} in Firestore`);
-    } catch (dbErr) {
-      console.warn(`⚠️ [MailService] Could not persist welcomeEmailSent flag:`, dbErr.message);
-    }
-  }
-
-  return result;
+  const emailAutomationService = require('./emailAutomationService');
+  return await emailAutomationService.sendWelcomeEmail(user);
 }
 
 /**

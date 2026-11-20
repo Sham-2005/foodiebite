@@ -171,6 +171,9 @@ module.exports = {
       __DEV__: JSON.stringify(process.env.NODE_ENV !== 'production')
     })
   ],
+  performance: {
+    hints: false,
+  },
   resolve: {
     alias: {
       'react-native$': 'react-native-web',
@@ -180,6 +183,11 @@ module.exports = {
       'react-native-image-picker$': path.resolve(__dirname, 'src/services/imagePickerMock.js'),
       // react-native-document-picker: native-only module — stub it out for the web bundle
       'react-native-document-picker$': path.resolve(__dirname, 'src/services/documentPickerWebStub.js'),
+      // react-native-reanimated: optional peer dependency of gesture-handler, provide web stub so webpack resolves without error
+      'react-native-reanimated$': path.resolve(__dirname, 'src/services/reanimatedWebStub.js'),
+      // Fix gesture-handler 2.18.0 PressableProps type export warning in ESM
+      [path.resolve(__dirname, 'node_modules/react-native-gesture-handler/lib/module/components/Pressable/PressableProps')]: path.resolve(__dirname, 'src/services/pressablePropsWebStub.js'),
+      [path.resolve(__dirname, 'node_modules/react-native-gesture-handler/lib/module/components/Pressable/PressableProps.js')]: path.resolve(__dirname, 'src/services/pressablePropsWebStub.js'),
     },
     extensions: ['.web.js', '.js', '.jsx', '.json'],
     mainFields: ['browser', 'module', 'main']
@@ -188,6 +196,12 @@ module.exports = {
     historyApiFallback: true,
     port: 3000,
     hot: true,
+    client: {
+      overlay: {
+        errors: true,
+        warnings: false
+      }
+    },
     proxy: [
       {
         context: ['/uploads', '/api'],

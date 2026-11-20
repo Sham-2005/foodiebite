@@ -17,9 +17,23 @@ import {
   apiTriggerTestNutritionEmail, 
   apiGetEmailHistory 
 } from '../services/api';
+import emailPreferencesService from '../services/emailPreferencesService';
 import { C, BtnOrange } from '../components/UI';
 
 const DELIVERY_TIMES = ['06:00', '07:00', '08:00', '09:00', '10:00', '18:00'];
+const TIMEZONES = [
+  { value: 'Asia/Kolkata', label: 'Asia/Kolkata (IST, UTC+5:30)' },
+  { value: 'America/New_York', label: 'America/New_York (EST, UTC-5)' },
+  { value: 'America/Los_Angeles', label: 'America/Los_Angeles (PST, UTC-8)' },
+  { value: 'America/Chicago', label: 'America/Chicago (CST, UTC-6)' },
+  { value: 'Europe/London', label: 'Europe/London (GMT, UTC+0)' },
+  { value: 'Europe/Paris', label: 'Europe/Paris (CET, UTC+1)' },
+  { value: 'Asia/Dubai', label: 'Asia/Dubai (GST, UTC+4)' },
+  { value: 'Asia/Singapore', label: 'Asia/Singapore (SGT, UTC+8)' },
+  { value: 'Asia/Tokyo', label: 'Asia/Tokyo (JST, UTC+9)' },
+  { value: 'Australia/Sydney', label: 'Australia/Sydney (AEST, UTC+10)' },
+  { value: 'UTC', label: 'UTC (Universal Coordinated Time)' }
+];
 const FREQUENCIES = [
   { value: 'daily', label: 'Every Day' },
   { value: 'weekly', label: 'Every Week' },
@@ -28,7 +42,7 @@ const FREQUENCIES = [
 
 export default function ProfileScreen() {
   const navigation = useNavigation();
-  const { user, setUser } = useApp();
+  const { user, setUser, logout } = useApp();
   
   // States
   const [reportsCount, setReportsCount] = useState(0);
@@ -45,11 +59,20 @@ export default function ProfileScreen() {
   
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [showFreqPicker, setShowFreqPicker] = useState(false);
+  const [showTzPicker, setShowTzPicker] = useState(false);
+
+  const [emailPrefs, setEmailPrefs] = useState({
+    daily_email_enabled: true,
+    preferred_delivery_time: '09:00',
+    timezone: 'Asia/Kolkata',
+    welcome_email_sent: true,
+    last_daily_email_sent: null,
+  });
 
   const [settings, setSettings] = useState({
     dailySuggestions: true,
     frequency: 'daily',
-    deliveryTime: '07:00',
+    deliveryTime: '09:00',
     loginAlerts: true,
     securityEmails: true,
     marketingEmails: false
@@ -83,12 +106,36 @@ export default function ProfileScreen() {
         setSettingsLoading(false);
       }
 
-      // 3. Get email history
+      // 3. Get Supabase email preferences
+      try {
+        const prefRes = await emailPreferencesService.getEmailPreferences(user.id || user.uid);
+        if (prefRes && prefRes.success && prefRes.preferences) {
+          setEmailPrefs(prefRes.preferences);
+          setSettings(prev => ({
+            ...prev,
+            dailySuggestions: prefRes.preferences.daily_email_enabled !== undefined ? prefRes.preferences.daily_email_enabled : prev.dailySuggestions,
+            deliveryTime: prefRes.preferences.preferred_delivery_time || prev.deliveryTime || '09:00',
+          }));
+        }
+      } catch (e) {
+        console.warn('Failed to load Supabase email preferences', e);
+      }
+
+      // 4. Get email history
       try {
         setHistoryLoading(true);
-        const historyData = await apiGetEmailHistory();
-        if (historyData && historyData.history) {
-          setEmailHistory(historyData.history);
+        const logRes = await emailPreferencesService.getEmailDeliveryLogs(user.id || user.uid);
+        if (logRes && logRes.success && logRes.logs && logRes.logs.length > 0) {
+          setEmailHistory(logRes.logs.map(log => ({
+            subject: log.email_type === 'welcome' ? 'Welcome to FoodieBite!' : 'Your Personalized Daily Food Recommendations',
+            timestamp: log.sent_at,
+            deliveryStatus: log.status === 'sent' || log.status === 'delivered' ? 'success' : 'failed'
+          })));
+        } else {
+          const historyData = await apiGetEmailHistory();
+          if (historyData && historyData.history) {
+            setEmailHistory(historyData.history);
+          }
         }
       } catch (e) {
         console.warn('Failed to load email history logs', e);
@@ -109,9 +156,25 @@ export default function ProfileScreen() {
   }, [toast]);
 
   // Handlers
-  const handleLogout = () => {
-    apiLogout();
-    setUser(null);
+  const handleLogout = async () => {
+    try {
+      if (typeof logout === 'function') {
+        await logout();
+      } else {
+        await apiLogout();
+        setUser(null);
+      }
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'SignIn' }],
+      });
+    } catch (err) {
+      console.warn('Logout error:', err.message);
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'SignIn' }],
+      });
+    }
   };
 
   const handleDeleteAccount = async () => {
@@ -119,10 +182,18 @@ export default function ProfileScreen() {
     setToast(null);
     try {
       await apiDeleteAccount();
-      setUser(null);
+      if (typeof logout === 'function') {
+        await logout();
+      } else {
+        setUser(null);
+      }
       setDeleteConfirm(false);
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'SignIn' }],
+      });
     } catch (err) {
-      setToast({ type: 'error', msg: err.message || 'Failed to delete account. Please re-authenticate and try again.' });
+      setToast({ type: 'error', msg: err.message || 'Failed to delete account. Please try again.' });
       setDeleteConfirm(false);
     } finally {
       setDeleting(false);
@@ -163,19 +234,79 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleToggleDailyEmail = async () => {
+    const nextVal = !emailPrefs.daily_email_enabled;
+    setEmailPrefs(prev => ({ ...prev, daily_email_enabled: nextVal }));
+    setSettings(prev => ({ ...prev, dailySuggestions: nextVal }));
+    try {
+      await emailPreferencesService.updateEmailPreferences({ daily_email_enabled: nextVal }, user?.id || user?.uid);
+      setToast({ type: 'success', msg: nextVal ? 'Daily recommendations enabled (9:00 AM local time)' : 'Daily recommendations disabled' });
+    } catch (e) {
+      setEmailPrefs(prev => ({ ...prev, daily_email_enabled: !nextVal }));
+      setToast({ type: 'error', msg: 'Failed to update email preferences' });
+    }
+  };
+
+  const handleChangeDeliveryTime = async (time) => {
+    setEmailPrefs(prev => ({ ...prev, preferred_delivery_time: time }));
+    setSettings(prev => ({ ...prev, deliveryTime: time }));
+    setShowTimePicker(false);
+    try {
+      await emailPreferencesService.updateEmailPreferences({ preferred_delivery_time: time }, user?.id || user?.uid);
+      setToast({ type: 'success', msg: `Delivery time set to ${time}` });
+    } catch (e) {
+      setToast({ type: 'error', msg: 'Failed to update delivery time' });
+    }
+  };
+
+  const handleChangeTimezone = async (tz) => {
+    setEmailPrefs(prev => ({ ...prev, timezone: tz }));
+    setShowTzPicker(false);
+    try {
+      await emailPreferencesService.updateEmailPreferences({ timezone: tz }, user?.id || user?.uid);
+      setToast({ type: 'success', msg: `Timezone updated to ${tz}` });
+    } catch (e) {
+      setToast({ type: 'error', msg: 'Failed to update timezone' });
+    }
+  };
+
+  const handleUnsubscribeDaily = async () => {
+    setEmailPrefs(prev => ({ ...prev, daily_email_enabled: false }));
+    setSettings(prev => ({ ...prev, dailySuggestions: false }));
+    try {
+      await emailPreferencesService.updateEmailPreferences({ daily_email_enabled: false }, user?.id || user?.uid);
+      setToast({ type: 'success', msg: 'Successfully unsubscribed from daily recommendation emails.' });
+    } catch (e) {
+      setToast({ type: 'error', msg: 'Failed to unsubscribe.' });
+    }
+  };
+
   const handleTriggerTestEmail = async () => {
     setTestTriggering(true);
     setToast(null);
     try {
-      const res = await apiTriggerTestNutritionEmail();
-      setToast({ 
-        type: 'success', 
-        msg: res.message || 'Personalized suggestions generated! Check your inbox.' 
-      });
+      const res = await emailPreferencesService.sendTestDailyEmail();
+      if (res && res.success) {
+        setToast({ 
+          type: 'success', 
+          msg: 'Personalized food recommendations email dispatched via Resend! Check your inbox.' 
+        });
+      } else {
+        // Fallback to legacy route if needed
+        const fallbackRes = await apiTriggerTestNutritionEmail();
+        setToast({ 
+          type: 'success', 
+          msg: fallbackRes.message || 'Personalized suggestions generated! Check your inbox.' 
+        });
+      }
       
-      const historyData = await apiGetEmailHistory();
-      if (historyData && historyData.history) {
-        setEmailHistory(historyData.history);
+      const logRes = await emailPreferencesService.getEmailDeliveryLogs(user?.id || user?.uid);
+      if (logRes && logRes.success && logRes.logs && logRes.logs.length > 0) {
+        setEmailHistory(logRes.logs.map(log => ({
+          subject: log.email_type === 'welcome' ? 'Welcome to FoodieBite!' : 'Your Personalized Daily Food Recommendations',
+          timestamp: log.sent_at,
+          deliveryStatus: log.status === 'sent' || log.status === 'delivered' ? 'success' : 'failed'
+        })));
       }
     } catch (err) {
       setToast({ type: 'error', msg: err.message || 'Failed to dispatch test suggestion email.' });
@@ -437,15 +568,15 @@ export default function ProfileScreen() {
                 {/* Granular Preference Switches */}
                 <View style={styles.settingsBox}>
                   
-                  {/* Switch 1: Daily Suggestions */}
+                  {/* Switch 1: Daily Food Recommendations */}
                   <View style={styles.switchRow}>
                     <View style={{ flex: 1, marginRight: 16 }}>
-                      <Text style={styles.switchTitle}>Daily suggestions digest</Text>
-                      <Text style={styles.switchDesc}>Daily personal meal plans & target targets</Text>
+                      <Text style={styles.switchTitle}>Daily Food Recommendations</Text>
+                      <Text style={styles.switchDesc}>Automated 9:00 AM breakfast, lunch, dinner & snack guide</Text>
                     </View>
                     <Switch
-                      value={settings.dailySuggestions}
-                      onValueChange={() => handleToggleSetting('dailySuggestions')}
+                      value={Boolean(emailPrefs.daily_email_enabled)}
+                      onValueChange={handleToggleDailyEmail}
                       trackColor={{ false: '#2e3036', true: C.orange }}
                       thumbColor="#fff"
                     />
@@ -495,31 +626,31 @@ export default function ProfileScreen() {
 
                 </View>
 
-                {/* Delivery Time & Frequency Controls */}
-                {settings.dailySuggestions ? (
+                {/* Delivery Time & Timezone Controls */}
+                {emailPrefs.daily_email_enabled ? (
                   <View style={styles.settingsBox}>
                     
                     {/* Time Picker */}
                     <View style={styles.pickerRow}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <Clock size={16} color={C.muted} />
-                        <Text style={styles.pickerLabel}>Delivery Time</Text>
+                        <Text style={styles.pickerLabel}>Delivery Time (Local)</Text>
                       </View>
                       <TouchableOpacity onPress={() => setShowTimePicker(true)} style={styles.dropdownTrigger}>
-                        <Text style={styles.dropdownText}>{settings.deliveryTime} AM</Text>
+                        <Text style={styles.dropdownText}>{emailPrefs.preferred_delivery_time || '09:00'}</Text>
                         <ChevronRight size={14} color="#fff" style={{ transform: [{ rotate: '90deg' }] }} />
                       </TouchableOpacity>
                     </View>
 
-                    {/* Frequency Menu */}
+                    {/* Timezone Selector */}
                     <View style={[styles.pickerRow, { borderTopWidth: 1, borderColor: C.border, paddingTop: 14 }]}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <Calendar size={16} color={C.muted} />
-                        <Text style={styles.pickerLabel}>Frequency</Text>
+                        <Text style={styles.pickerLabel}>Timezone</Text>
                       </View>
-                      <TouchableOpacity onPress={() => setShowFreqPicker(true)} style={styles.dropdownTrigger}>
-                        <Text style={styles.dropdownText}>
-                          {FREQUENCIES.find(f => f.value === settings.frequency)?.label || settings.frequency}
+                      <TouchableOpacity onPress={() => setShowTzPicker(true)} style={styles.dropdownTrigger}>
+                        <Text style={styles.dropdownText} numberOfLines={1}>
+                          {TIMEZONES.find(t => t.value === emailPrefs.timezone)?.label.split(' ')[0] || emailPrefs.timezone || 'Asia/Kolkata'}
                         </Text>
                         <ChevronRight size={14} color="#fff" style={{ transform: [{ rotate: '90deg' }] }} />
                       </TouchableOpacity>
@@ -528,12 +659,42 @@ export default function ProfileScreen() {
                   </View>
                 ) : null}
 
+                {/* Welcome Email Status Badge */}
+                <View style={styles.logCard}>
+                  <Text style={styles.logCardTitle}>Automated Email Status</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                    <Mail size={15} color={C.orange} />
+                    <Text style={{ fontSize: 13, color: '#fff', fontWeight: '600' }}>
+                      Welcome Email:
+                    </Text>
+                    <View style={{
+                      backgroundColor: emailPrefs.welcome_email_sent ? 'rgba(74, 222, 128, 0.15)' : 'rgba(250, 204, 21, 0.15)',
+                      paddingHorizontal: 8,
+                      paddingVertical: 2,
+                      borderRadius: 6,
+                    }}>
+                      <Text style={{
+                        fontSize: 11,
+                        fontWeight: '700',
+                        color: emailPrefs.welcome_email_sent ? '#4ade80' : '#facc15'
+                      }}>
+                        {emailPrefs.welcome_email_sent ? '✓ DISPATCHED' : 'PENDING ON REGISTRATION'}
+                      </Text>
+                    </View>
+                  </View>
+                  {emailPrefs.last_daily_email_sent && (
+                    <Text style={{ fontSize: 12, color: C.muted2, marginTop: 6 }}>
+                      Last Daily Email: {formatTimestamp(emailPrefs.last_daily_email_sent)}
+                    </Text>
+                  )}
+                </View>
+
                 {/* Last Receipt Metadata Log Card */}
                 <View style={styles.logCard}>
-                  <Text style={styles.logCardTitle}>Daily plan status log</Text>
+                  <Text style={styles.logCardTitle}>Recent Delivery Logs</Text>
                   {latestEmail ? (
                     <View>
-                      <Text style={styles.logEmailSubject}>{latestEmail.subject || 'Smart Nutrition suggestions plan'}</Text>
+                      <Text style={styles.logEmailSubject}>{latestEmail.subject || 'Personalized Food Recommendations'}</Text>
                       <Text style={styles.logEmailInfo}>
                         Sent: {formatTimestamp(latestEmail.timestamp)}  ·  
                         <Text style={[
@@ -549,24 +710,42 @@ export default function ProfileScreen() {
                   )}
                 </View>
 
-                {/* Test Dispatch Button */}
+                {/* Actions: Send Test Email & Unsubscribe */}
                 <TouchableOpacity
                   onPress={handleTriggerTestEmail}
-                  disabled={testTriggering || settings.frequency === 'never' || !settings.dailySuggestions}
+                  disabled={testTriggering || !emailPrefs.daily_email_enabled}
                   style={[
                     styles.testBtn,
-                    (testTriggering || settings.frequency === 'never' || !settings.dailySuggestions) && { opacity: 0.4 }
+                    (testTriggering || !emailPrefs.daily_email_enabled) && { opacity: 0.4 }
                   ]}
                 >
                   {testTriggering ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                       <ActivityIndicator size="small" color="#fff" />
-                      <Text style={styles.testBtnText}>Generating Plan...</Text>
+                      <Text style={styles.testBtnText}>Generating & Sending via Resend...</Text>
                     </View>
                   ) : (
-                    <Text style={styles.testBtnText}>🚀 Send Test Health Plan</Text>
+                    <Text style={styles.testBtnText}>🚀 Send Test Daily Food Email</Text>
                   )}
                 </TouchableOpacity>
+
+                {emailPrefs.daily_email_enabled && (
+                  <TouchableOpacity
+                    onPress={handleUnsubscribeDaily}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: 'rgba(239, 68, 68, 0.4)',
+                      borderRadius: 12,
+                      paddingVertical: 10,
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(239, 68, 68, 0.05)',
+                    }}
+                  >
+                    <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '600' }}>
+                      Unsubscribe from Daily Emails
+                    </Text>
+                  </TouchableOpacity>
+                )}
 
               </ScrollView>
             )}
@@ -621,21 +800,42 @@ export default function ProfileScreen() {
       <Modal visible={showTimePicker} transparent animationType="slide">
         <View style={styles.subModalOverlay}>
           <View style={styles.subModalContent}>
-            <Text style={styles.subModalTitle}>Select Delivery Time</Text>
+            <Text style={styles.subModalTitle}>Select Local Delivery Time</Text>
             {DELIVERY_TIMES.map(time => (
               <TouchableOpacity
                 key={time}
-                onPress={() => {
-                  handleChangeSetting('deliveryTime', time);
-                  setShowTimePicker(false);
-                }}
+                onPress={() => handleChangeDeliveryTime(time)}
                 style={styles.subModalOption}
               >
-                <Text style={[styles.subModalOptionText, settings.deliveryTime === time && { color: C.orange }]}>{time} AM</Text>
-                {settings.deliveryTime === time && <Check size={16} color={C.orange} />}
+                <Text style={[styles.subModalOptionText, (emailPrefs.preferred_delivery_time || settings.deliveryTime) === time && { color: C.orange }]}>{time}</Text>
+                {(emailPrefs.preferred_delivery_time || settings.deliveryTime) === time && <Check size={16} color={C.orange} />}
               </TouchableOpacity>
             ))}
             <TouchableOpacity onPress={() => setShowTimePicker(false)} style={styles.subModalClose}>
+              <Text style={{ color: '#fff', fontWeight: '700' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Timezone Picker Sub-Modal */}
+      <Modal visible={showTzPicker} transparent animationType="slide">
+        <View style={styles.subModalOverlay}>
+          <View style={styles.subModalContent}>
+            <Text style={styles.subModalTitle}>Select Timezone</Text>
+            <ScrollView style={{ maxHeight: 300 }}>
+              {TIMEZONES.map(tz => (
+                <TouchableOpacity
+                  key={tz.value}
+                  onPress={() => handleChangeTimezone(tz.value)}
+                  style={styles.subModalOption}
+                >
+                  <Text style={[styles.subModalOptionText, emailPrefs.timezone === tz.value && { color: C.orange }]}>{tz.label}</Text>
+                  {emailPrefs.timezone === tz.value && <Check size={16} color={C.orange} />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity onPress={() => setShowTzPicker(false)} style={styles.subModalClose}>
               <Text style={{ color: '#fff', fontWeight: '700' }}>Cancel</Text>
             </TouchableOpacity>
           </View>

@@ -903,7 +903,8 @@ const styles = StyleSheet.create({
   statusBadgeText: {
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5
+    letterSpacing: 0.5,
+    color: '#F8FAFC'
   },
   ticketDate: {
     color: '#64748b',
@@ -987,7 +988,8 @@ const styles = StyleSheet.create({
   },
   actionBtnText: {
     fontSize: 12,
-    fontWeight: '700'
+    fontWeight: '700',
+    color: '#F8FAFC'
   },
   actionBtnPrimary: {
     flexDirection: 'row',

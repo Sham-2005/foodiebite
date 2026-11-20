@@ -3,7 +3,7 @@
 //  Phase 5: Behavioral Learning, Preference Evolution & Adaptive Store
 // ─────────────────────────────────────────────────────────────
 
-const admin = require('firebase-admin');
+const { admin } = require('../config/firebase');
 
 // ── 1. Centralized Configuration ──────────────────────────────
 const BEHAVIOR_CONFIG = {

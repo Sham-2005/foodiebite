@@ -1,11 +1,13 @@
 // ─────────────────────────────────────────────────────────────
 //  backend/src/services/userStore.js
-//  Authoritative Local & Cloud User Directory Synchronization Store
-//  Maintains registered user accounts for the Admin Dashboard
+//  FoodieBite User Store with Supabase PostgreSQL Synchronization
 // ─────────────────────────────────────────────────────────────
+
+'use strict';
 
 const fs = require('fs');
 const path = require('path');
+const { getSupabaseAdmin, getSupabaseClient } = require('../config/supabase');
 
 const DATA_DIR = path.join(__dirname, '../../data');
 const USERS_FILE = path.join(DATA_DIR, 'users_directory.json');
@@ -34,7 +36,7 @@ function initStore() {
       }
     }
 
-    // Ensure only the authorized administrator account exists as admin
+    // Ensure authorized administrator account exists as admin
     const defaultAccounts = [
       {
         id: 'DIzyGlgaTgTW6MP1MVMVmEuIug93',
@@ -52,7 +54,6 @@ function initStore() {
       }
     ];
 
-    // Purge any legacy default admin accounts
     usersMap.delete('admin_root');
     for (const [key, u] of usersMap.entries()) {
       if ((u.email || '').trim().toLowerCase() === 'admin@foodiebite.com') {
@@ -111,7 +112,7 @@ function getUserById(id) {
 }
 
 /**
- * Upsert user record from login, register, or sync event
+ * Upsert user record and sync to Supabase public.profiles
  */
 function upsertUser(userData) {
   if (!userData) return null;
@@ -128,7 +129,6 @@ function upsertUser(userData) {
   const isAuthorizedAdmin = (email === 'sham111205s@gmail.com');
   const role = isAuthorizedAdmin ? 'admin' : (userData.role === 'merchant' ? 'merchant' : 'user');
 
-  // Determine provider: 'google.com', 'password', etc.
   let authProvider = userData.authProvider || existing?.authProvider || 'password';
   if (userData.providerId) authProvider = userData.providerId;
   if (!authProvider && email.includes('google')) authProvider = 'google.com';
@@ -154,13 +154,31 @@ function upsertUser(userData) {
     }
   };
 
-  // If ID changed from existing (e.g. matched by email), update mapping
   if (existing && existing.id !== uid) {
     usersMap.delete(existing.id);
   }
 
   usersMap.set(uid, merged);
   persist();
+
+  // Async sync to Supabase public.profiles
+  try {
+    const client = getSupabaseAdmin() || getSupabaseClient();
+    if (client && uid) {
+      client.from('profiles').upsert({
+        id: uid,
+        email: merged.email,
+        name: merged.name,
+        role: merged.role,
+        diet_type: merged.dietType,
+        preferences: merged.preferences,
+        disabled: merged.disabled,
+        account_status: merged.accountStatus,
+        updated_at: nowIso
+      }, { onConflict: 'id' }).catch(() => {});
+    }
+  } catch (_) {}
+
   return merged;
 }
 
@@ -182,12 +200,41 @@ function updateUser(id, updates) {
 
   usersMap.set(id, updated);
   persist();
+
+  // Async sync to Supabase public.profiles
+  try {
+    const client = getSupabaseAdmin() || getSupabaseClient();
+    if (client) {
+      const dbUpdates = {};
+      if (updates.name !== undefined) dbUpdates.name = updates.name;
+      if (updates.role !== undefined) dbUpdates.role = updates.role;
+      if (updates.disabled !== undefined) {
+        dbUpdates.disabled = Boolean(updates.disabled);
+        dbUpdates.account_status = updates.disabled ? 'disabled' : 'active';
+      }
+      if (updates.preferences !== undefined) dbUpdates.preferences = updates.preferences;
+      if (updates.dietType !== undefined) dbUpdates.diet_type = updates.dietType;
+      dbUpdates.updated_at = new Date().toISOString();
+
+      client.from('profiles').update(dbUpdates).eq('id', id).catch(() => {});
+    }
+  } catch (_) {}
+
   return updated;
 }
 
 function deleteUser(id) {
   const existed = usersMap.delete(id);
   if (existed) persist();
+
+  // Async delete from Supabase public.profiles
+  try {
+    const client = getSupabaseAdmin() || getSupabaseClient();
+    if (client) {
+      client.from('profiles').delete().eq('id', id).catch(() => {});
+    }
+  } catch (_) {}
+
   return existed;
 }
 

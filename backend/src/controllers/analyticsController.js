@@ -1,21 +1,22 @@
-const admin = require('firebase-admin');
+// ─────────────────────────────────────────────────────────────
+//  backend/src/controllers/analyticsController.js
+//  FoodieBite Nutrition & Meal Analytics (Strict Supabase PostgreSQL)
+// ─────────────────────────────────────────────────────────────
 
-// ── Lazy Firestore getter — never crashes on module load ──────
-function getDb() {
-  try {
-    return admin.firestore();
-  } catch (err) {
-    console.warn('⚠️ analyticsController: Firestore unavailable:', err.message);
-    return null;
-  }
-}
+'use strict';
+
+const { getUserSupabaseClient, getSupabaseClient, getSupabaseAdmin } = require('../config/supabase');
 
 exports.getAnalyticsSummary = async (req, res, next) => {
   try {
-    const userId = req.user.id;
-    const { range = '7' } = req.query; // '7' or '30' days
+    const userId = req.user?.id || req.user?.uid;
+    const token = req.token;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Not authorized.' });
+    }
 
-    const daysCount = parseInt(range) || 7;
+    const { range = '7' } = req.query; // '7' or '30' days
+    const daysCount = parseInt(range, 10) || 7;
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysCount);
     const cutoffIso = cutoffDate.toISOString();
@@ -40,56 +41,74 @@ exports.getAnalyticsSummary = async (req, res, next) => {
     let totalProtein  = 0;
     let totalCarbs    = 0;
     let totalFat      = 0;
-    let loggedDaysSet = new Set();
+    const loggedDaysSet = new Set();
     let waterTarget   = 2500;
 
-    // ── Firestore queries (gracefully skipped if unavailable) ─
-    const db = getDb();
-    if (db) {
+    const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
+    if (client) {
       try {
-        // 1. Fetch meal logs
-        const logsSnap = await db
-          .collection('users').doc(userId)
-          .collection('mealLogs')
-          .where('loggedAt', '>=', cutoffIso)
-          .get();
+        // 1. Fetch meal logs from Supabase public.user_meal_logs
+        const { data: logs, error: logsErr } = await client
+          .from('user_meal_logs')
+          .select('*')
+          .eq('user_id', userId)
+          .gte('logged_at', cutoffIso);
 
-        logsSnap.forEach(doc => {
-          const log = doc.data();
-          const dStr = (log.loggedAt || '').split('T')[0];
-          if (dailyData[dStr]) {
-            dailyData[dStr].calories  += log.calories  || 0;
-            dailyData[dStr].protein   += log.protein   || 0;
-            dailyData[dStr].carbs     += log.carbs     || 0;
-            dailyData[dStr].fat       += log.fat       || 0;
-            dailyData[dStr].fiber     += log.fiber     || 0;
-            dailyData[dStr].sodium    += log.sodium    || 0;
-            dailyData[dStr].sugar     += log.sugar     || 0;
-            dailyData[dStr].mealCount += 1;
-            if (log.healthScore !== undefined) dailyData[dStr].healthScores.push(log.healthScore);
-            totalCalories += log.calories || 0;
-            totalProtein  += log.protein  || 0;
-            totalCarbs    += log.carbs    || 0;
-            totalFat      += log.fat      || 0;
-            loggedDaysSet.add(dStr);
-          }
-        });
+        if (!logsErr && logs) {
+          logs.forEach(log => {
+            const loggedTime = log.logged_at || log.created_at || '';
+            const dStr = loggedTime.split('T')[0];
+            if (dailyData[dStr]) {
+              const nutrition = log.nutrition || {};
+              const calories = Number(log.calories || nutrition.calories || 0);
+              const protein = Number(log.protein || nutrition.protein || 0);
+              const carbs = Number(log.carbs || nutrition.carbs || 0);
+              const fat = Number(log.fat || nutrition.fat || 0);
+              const fiber = Number(nutrition.fiber || 0);
+              const sodium = Number(nutrition.sodium || 0);
+              const sugar = Number(nutrition.sugar || 0);
+              const healthScore = log.health_score !== undefined ? log.health_score : log.healthScore;
+
+              dailyData[dStr].calories += calories;
+              dailyData[dStr].protein  += protein;
+              dailyData[dStr].carbs    += carbs;
+              dailyData[dStr].fat      += fat;
+              dailyData[dStr].fiber    += fiber;
+              dailyData[dStr].sodium   += sodium;
+              dailyData[dStr].sugar    += sugar;
+              dailyData[dStr].mealCount += 1;
+
+              if (healthScore !== undefined && healthScore !== null) {
+                dailyData[dStr].healthScores.push(Number(healthScore));
+              }
+
+              totalCalories += calories;
+              totalProtein  += protein;
+              totalCarbs    += carbs;
+              totalFat      += fat;
+              loggedDaysSet.add(dStr);
+            }
+          });
+        }
       } catch (err) {
-        console.warn('⚠️ analyticsController: mealLogs query failed (safe):', err.message);
+        console.warn('⚠️ [analyticsController] user_meal_logs query note:', err.message);
       }
 
-      // 2. Fetch user water target
+      // 2. Fetch user profile for weight/water target
       try {
-        const userDoc = await db.collection('users').doc(userId).get();
-        if (userDoc.exists) {
-          const weight = parseFloat(userDoc.data().weight || '70');
+        const { data: profile } = await client
+          .from('profiles')
+          .select('weight, preferences')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (profile) {
+          const weight = parseFloat(profile.weight || profile.preferences?.weight || '70');
           waterTarget = Math.round(weight * 35); // ml
         }
       } catch (err) {
-        console.warn('⚠️ analyticsController: userDoc fetch failed (safe):', err.message);
+        console.warn('⚠️ [analyticsController] profile fetch note:', err.message);
       }
-    } else {
-      console.warn('⚠️ analyticsController: Firestore unavailable — returning fallback analytics');
     }
 
     // ── Build chart data ──────────────────────────────────────
@@ -115,9 +134,9 @@ exports.getAnalyticsSummary = async (req, res, next) => {
 
     const activeDays = loggedDaysSet.size || 1;
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      source: db ? 'firestore' : 'fallback',
+      source: 'supabase',
       range: daysCount,
       summary: {
         avgDailyCalories: Math.round(totalCalories / activeDays),

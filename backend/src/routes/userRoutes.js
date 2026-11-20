@@ -11,13 +11,17 @@ const {
   getSearchHistory, addSearchHistory, clearSearchHistory,
   sendTestDailyEmail,
   recordBehavioralEvent, getBehaviorProfile, resetBehaviorLearning,
-  syncUser
+  syncUser,
+  deleteUserAccount
 } = require('../controllers/userController');
 
 // User sync endpoint (reconciles client authentication with backend & Firestore)
 router.post('/sync', syncUser);
 
 router.use(protect);
+
+// Account deletion endpoint
+router.delete('/account', deleteUserAccount);
 
 router.get('/profile',  getProfile);
 router.put('/profile',  updateProfile);

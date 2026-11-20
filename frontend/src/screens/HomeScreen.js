@@ -176,7 +176,7 @@ export default function HomeScreen() {
     .slice(0, 8);
 
   return (
-    <AppLayout>
+    <AppLayout isHome={true}>
       <ScrollView showsVerticalScrollIndicator={false} style={styles.scroll}>
         
         {/* Header Bar */}

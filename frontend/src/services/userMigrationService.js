@@ -15,7 +15,7 @@ import { getItemSync, setItemSync, getJSONSync } from './storage.js';
 function getLocalUsers() {
   try {
     return getJSONSync('nb_mock_users', {});
-  } catch (_) {}
+  } catch (_) { }
   return {};
 }
 
@@ -25,7 +25,7 @@ function getLocalUsers() {
 function saveLocalUsers(users) {
   try {
     setItemSync('nb_mock_users', JSON.stringify(users));
-  } catch (_) {}
+  } catch (_) { }
 }
 
 /**
@@ -78,16 +78,16 @@ export async function reconcileLegacyUserData(supabaseUser, supabaseProfile) {
         };
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 
   // 3. Build merged preferences and metadata
   const currentPreferences = supabaseProfile?.preferences || {};
-  const hasCustomSupabasePrefs = currentPreferences && 
+  const hasCustomSupabasePrefs = currentPreferences &&
     Object.keys(currentPreferences).length > 0 &&
     (currentPreferences.spiceLevel !== 'Medium' || (currentPreferences.allergies && currentPreferences.allergies.length > 0));
 
-  const mergedPreferences = hasCustomSupabasePrefs 
-    ? currentPreferences 
+  const mergedPreferences = hasCustomSupabasePrefs
+    ? currentPreferences
     : (legacyData?.preferences || currentPreferences);
 
   const mergedDietType = supabaseProfile?.diet_type || legacyData?.dietType || 'Vegetarian';

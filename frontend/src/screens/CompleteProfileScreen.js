@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, ActivityIndicator, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Sparkles, ArrowRight, Scale, Ruler, Smile, CheckCircle2, AlertCircle } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { apiCompleteProfile } from '../services/api';
+import emailPreferencesService from '../services/emailPreferencesService';
 import { C, BtnOrange } from '../components/UI';
 
 const DIET_TYPES = ['Vegetarian', 'Non-Vegetarian', 'Vegan', 'Eggetarian', 'Keto'];
@@ -81,9 +82,11 @@ export default function CompleteProfileScreen() {
           profileCompleted: true,
         };
         setUser(completedUser);
+        // Trigger one-time welcome email upon profile onboarding completion
+        emailPreferencesService.triggerWelcomeEmail(completedUser).catch(() => {});
         setToast({ type: 'success', msg: 'Profile completed successfully! Redirecting...' });
         setTimeout(() => {
-          if (typeof window !== 'undefined' && window.location) {
+          if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
             window.location.href = '/home';
           } else {
             navigation.navigate('Home');

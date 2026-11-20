@@ -4,7 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { ShieldAlert, Home } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { getAdminSession } from '../services/api';
-import { setItemSync } from '../services/storage.js';
+import { setItemSync } from '../services/storage';
 
 const LazyAdminDashboardScreen = React.lazy(() => import('../screens/AdminDashboardScreen'));
 
@@ -19,13 +19,17 @@ export default function ProtectedAdminRoute(props) {
   const navigation = useNavigation();
 
   const adminSession = getAdminSession();
-  const sessionUser = adminSession?.user && normalizeEmail(adminSession.user.email) === AUTHORIZED_ADMIN_EMAIL
+  const sessionUser = adminSession?.user && (adminSession.user.role === 'admin' || normalizeEmail(adminSession.user.email) === AUTHORIZED_ADMIN_EMAIL)
     ? adminSession.user
     : null;
   const effectiveUser = user || sessionUser;
 
   const cleanEmail = normalizeEmail(effectiveUser?.email);
-  const isAuthorized = !!effectiveUser && cleanEmail === AUTHORIZED_ADMIN_EMAIL;
+  // Role-based authorization: check Supabase profile role or authorized admin email
+  const isAuthorized = Boolean(
+    effectiveUser &&
+    (effectiveUser.role === 'admin' || (effectiveUser.role !== 'user' && cleanEmail === AUTHORIZED_ADMIN_EMAIL))
+  );
 
   // Scenario C: Unauthenticated visitor -> Redirect to SignIn
   useEffect(() => {

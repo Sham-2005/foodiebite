@@ -968,3 +968,404 @@ CREATE INDEX IF NOT EXISTS gin_analytics_metadata ON public.analytics_events USI
 CREATE INDEX IF NOT EXISTS gin_cached_foods_nutriments ON public.cached_foods USING GIN (nutriments);
 CREATE INDEX IF NOT EXISTS gin_foodiebite_recs_diet_tags ON public.foodiebite_recommendations USING GIN (diet_tags);
 CREATE INDEX IF NOT EXISTS gin_foodiebite_recs_foods ON public.foodiebite_recommendations USING GIN (foods);
+
+-- ------------------------------------------------------------------------------
+-- STORAGE BUCKET & RLS POLICIES FOR MEDICAL REPORTS
+-- ------------------------------------------------------------------------------
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+    'medical-reports',
+    'medical-reports',
+    false,
+    20971520,
+    ARRAY['application/pdf', 'image/jpeg', 'image/png', 'image/webp']::text[]
+)
+ON CONFLICT (id) DO UPDATE SET
+    public = false,
+    file_size_limit = 20971520,
+    allowed_mime_types = ARRAY['application/pdf', 'image/jpeg', 'image/png', 'image/webp']::text[];
+
+DROP POLICY IF EXISTS "medical_reports_storage_insert_own" ON storage.objects;
+CREATE POLICY "medical_reports_storage_insert_own"
+    ON storage.objects FOR INSERT
+    TO authenticated
+    WITH CHECK (
+        bucket_id = 'medical-reports' AND
+        (storage.foldername(name))[1] = auth.uid()::text
+    );
+
+DROP POLICY IF EXISTS "medical_reports_storage_select_own" ON storage.objects;
+CREATE POLICY "medical_reports_storage_select_own"
+    ON storage.objects FOR SELECT
+    TO authenticated
+    USING (
+        bucket_id = 'medical-reports' AND
+        (storage.foldername(name))[1] = auth.uid()::text
+    );
+
+DROP POLICY IF EXISTS "medical_reports_storage_update_own" ON storage.objects;
+CREATE POLICY "medical_reports_storage_update_own"
+    ON storage.objects FOR UPDATE
+    TO authenticated
+    USING (
+        bucket_id = 'medical-reports' AND
+        (storage.foldername(name))[1] = auth.uid()::text
+    );
+
+DROP POLICY IF EXISTS "medical_reports_storage_delete_own" ON storage.objects;
+CREATE POLICY "medical_reports_storage_delete_own"
+    ON storage.objects FOR DELETE
+    TO authenticated
+    USING (
+        bucket_id = 'medical-reports' AND
+        (storage.foldername(name))[1] = auth.uid()::text
+    );
+
+
+
+-- ==============================================================================
+-- FOODIEBITE AUTOMATED EMAIL SYSTEM MIGRATION
+-- Migration: 20261119000008_automated_email_system.sql
+-- Description:
+--   1. Creates public.email_preferences table with timezone, delivery time, and toggles.
+--   2. Creates public.email_delivery_logs table with strict duplicate-prevention unique indexes.
+--   3. Configures Row Level Security (RLS) policies for user tenant isolation.
+--   4. Creates auto-provisioning triggers on public.profiles.
+--   5. Seeds existing user profiles into email_preferences with welcome_email_sent = TRUE
+--      to guarantee existing users are never spammed.
+-- ==============================================================================
+
+-- ------------------------------------------------------------------------------
+-- 1. EMAIL PREFERENCES TABLE (public.email_preferences)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.email_preferences (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL UNIQUE REFERENCES public.profiles(id) ON DELETE CASCADE,
+    email_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    welcome_email_sent BOOLEAN NOT NULL DEFAULT FALSE,
+    daily_email_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    preferred_delivery_time TEXT NOT NULL DEFAULT '09:00',
+    timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+    last_daily_email_sent TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- Index on timezone and delivery time for efficient scheduled batch queries
+CREATE INDEX IF NOT EXISTS idx_email_prefs_delivery 
+    ON public.email_preferences (daily_email_enabled, preferred_delivery_time, timezone)
+    WHERE daily_email_enabled = TRUE;
+
+CREATE INDEX IF NOT EXISTS idx_email_prefs_user_id 
+    ON public.email_preferences (user_id);
+
+-- ------------------------------------------------------------------------------
+-- 2. EMAIL DELIVERY LOGS TABLE (public.email_delivery_logs)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.email_delivery_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    email_type TEXT NOT NULL CHECK (email_type IN ('welcome', 'daily_recommendation', 'system_alert', 'password_reset')),
+    delivery_date TEXT NOT NULL, -- Format: YYYY-MM-DD
+    recipient_email TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('delivered', 'sent', 'failed', 'skipped')),
+    provider_message_id TEXT,
+    sent_at TIMESTAMPTZ,
+    error_message TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_delivery_logs_user 
+    ON public.email_delivery_logs (user_id, email_type, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_email_delivery_logs_date 
+    ON public.email_delivery_logs (delivery_date, email_type);
+
+-- Unique constraint for Welcome emails: exactly ONE successful welcome email per user
+CREATE UNIQUE INDEX IF NOT EXISTS uq_email_delivery_welcome
+    ON public.email_delivery_logs (user_id, email_type)
+    WHERE email_type = 'welcome' AND status IN ('sent', 'delivered');
+
+-- Unique constraint for Daily Recommendations: exactly ONE successful daily email per user per date
+CREATE UNIQUE INDEX IF NOT EXISTS uq_email_delivery_daily_date
+    ON public.email_delivery_logs (user_id, email_type, delivery_date)
+    WHERE email_type = 'daily_recommendation' AND status IN ('sent', 'delivered');
+
+-- ------------------------------------------------------------------------------
+-- 3. ROW LEVEL SECURITY (RLS) POLICIES
+-- ------------------------------------------------------------------------------
+ALTER TABLE public.email_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.email_delivery_logs ENABLE ROW LEVEL SECURITY;
+
+-- email_preferences RLS
+DROP POLICY IF EXISTS "email_preferences_select_own" ON public.email_preferences;
+CREATE POLICY "email_preferences_select_own"
+    ON public.email_preferences FOR SELECT
+    TO authenticated
+    USING (auth.uid() = user_id OR public.is_admin());
+
+DROP POLICY IF EXISTS "email_preferences_insert_own" ON public.email_preferences;
+CREATE POLICY "email_preferences_insert_own"
+    ON public.email_preferences FOR INSERT
+    TO authenticated
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+DROP POLICY IF EXISTS "email_preferences_update_own" ON public.email_preferences;
+CREATE POLICY "email_preferences_update_own"
+    ON public.email_preferences FOR UPDATE
+    TO authenticated
+    USING (auth.uid() = user_id OR public.is_admin())
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+DROP POLICY IF EXISTS "email_preferences_delete_own" ON public.email_preferences;
+CREATE POLICY "email_preferences_delete_own"
+    ON public.email_preferences FOR DELETE
+    TO authenticated
+    USING (auth.uid() = user_id OR public.is_admin());
+
+-- email_delivery_logs RLS
+-- Users can view their own delivery audit logs; only backend/admin can insert/update logs
+DROP POLICY IF EXISTS "email_delivery_logs_select_own" ON public.email_delivery_logs;
+CREATE POLICY "email_delivery_logs_select_own"
+    ON public.email_delivery_logs FOR SELECT
+    TO authenticated
+    USING (auth.uid() = user_id OR public.is_admin());
+
+DROP POLICY IF EXISTS "email_delivery_logs_insert_admin" ON public.email_delivery_logs;
+CREATE POLICY "email_delivery_logs_insert_admin"
+    ON public.email_delivery_logs FOR INSERT
+    TO authenticated
+    WITH CHECK (public.is_admin());
+
+-- ------------------------------------------------------------------------------
+-- 4. AUTO-PROVISIONING TRIGGERS & FUNCTIONS
+-- ------------------------------------------------------------------------------
+-- Function to automatically provision email_preferences when a new profile is created
+CREATE OR REPLACE FUNCTION public.handle_new_user_email_preferences()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    INSERT INTO public.email_preferences (user_id, welcome_email_sent, daily_email_enabled, preferred_delivery_time, timezone)
+    VALUES (NEW.id, FALSE, TRUE, '09:00', 'Asia/Kolkata')
+    ON CONFLICT (user_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_provision_email_preferences ON public.profiles;
+CREATE TRIGGER trigger_provision_email_preferences
+    AFTER INSERT ON public.profiles
+    FOR EACH ROW
+    EXECUTE FUNCTION public.handle_new_user_email_preferences();
+
+-- ------------------------------------------------------------------------------
+-- 5. SEED EXISTING PROFILES WITH SAFE DEFAULTS
+-- Guarantee existing users do not receive unwanted welcome emails upon deployment
+-- ------------------------------------------------------------------------------
+INSERT INTO public.email_preferences (user_id, welcome_email_sent, daily_email_enabled, preferred_delivery_time, timezone)
+SELECT 
+    p.id, 
+    TRUE, -- Existing users are marked as already having received welcome email
+    TRUE, 
+    '09:00', 
+    'Asia/Kolkata'
+FROM public.profiles p
+ON CONFLICT (user_id) DO NOTHING;
+
+-- ------------------------------------------------------------------------------
+-- 6. SECURE ACCOUNT DELETION & RLS HARDENING (MIGRATION 20261119000009)
+-- ------------------------------------------------------------------------------
+
+-- Allow users to delete their own profile or admin to delete
+DROP POLICY IF EXISTS "profiles_delete_admin_only" ON public.profiles;
+DROP POLICY IF EXISTS "profiles_delete_own_or_admin" ON public.profiles;
+
+CREATE POLICY "profiles_delete_own_or_admin"
+    ON public.profiles FOR DELETE
+    TO authenticated
+    USING (auth.uid() = id OR public.is_admin());
+
+-- User feedback RLS policies
+ALTER TABLE public.user_feedback ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "feedback_insert_authenticated" ON public.user_feedback;
+DROP POLICY IF EXISTS "feedback_insert_anon" ON public.user_feedback;
+DROP POLICY IF EXISTS "feedback_select_own_or_admin" ON public.user_feedback;
+DROP POLICY IF EXISTS "feedback_admin_all" ON public.user_feedback;
+
+CREATE POLICY "feedback_insert_authenticated"
+    ON public.user_feedback FOR INSERT
+    TO authenticated
+    WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+
+CREATE POLICY "feedback_insert_anon"
+    ON public.user_feedback FOR INSERT
+    TO anon
+    WITH CHECK (user_id IS NULL);
+
+CREATE POLICY "feedback_select_own_or_admin"
+    ON public.user_feedback FOR SELECT
+    TO authenticated
+    USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "feedback_admin_all"
+    ON public.user_feedback FOR ALL
+    TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
+
+-- Restaurant requests RLS policies
+ALTER TABLE public.restaurant_requests ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "restaurant_requests_insert_own" ON public.restaurant_requests;
+DROP POLICY IF EXISTS "restaurant_requests_select_own_or_admin" ON public.restaurant_requests;
+DROP POLICY IF EXISTS "restaurant_requests_admin_modify" ON public.restaurant_requests;
+
+CREATE POLICY "restaurant_requests_insert_own"
+    ON public.restaurant_requests FOR INSERT
+    TO authenticated
+    WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "restaurant_requests_select_own_or_admin"
+    ON public.restaurant_requests FOR SELECT
+    TO authenticated
+    USING (auth.uid() = owner_id OR public.is_admin());
+
+CREATE POLICY "restaurant_requests_admin_modify"
+    ON public.restaurant_requests FOR ALL
+    TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
+
+-- Atomic user account deletion function (Self-Service)
+CREATE OR REPLACE FUNCTION public.delete_user_account()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, storage
+AS $$
+DECLARE
+    v_user_id UUID;
+    v_email TEXT;
+BEGIN
+    v_user_id := auth.uid();
+    IF v_user_id IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated: cannot delete account without active session';
+    END IF;
+
+    SELECT email INTO v_email FROM auth.users WHERE id = v_user_id;
+
+    -- Block deletion of primary admin account
+    IF v_email = 'sham111205s@gmail.com' THEN
+        RAISE EXCEPTION 'Operation blocked: Primary system administrator account cannot be deleted';
+    END IF;
+
+    -- A. Purge user files from storage.objects
+    DELETE FROM storage.objects
+    WHERE bucket_id = 'medical-reports'
+      AND (storage.foldername(name))[1] = v_user_id::text;
+
+    -- B. Explicitly delete user-owned records from all application tables
+    DELETE FROM public.medical_reports WHERE user_id = v_user_id;
+    DELETE FROM public.health_profiles WHERE user_id = v_user_id;
+    DELETE FROM public.user_deficiencies WHERE user_id = v_user_id;
+    DELETE FROM public.user_favorites WHERE user_id = v_user_id;
+    DELETE FROM public.user_search_history WHERE user_id = v_user_id;
+    DELETE FROM public.user_meal_logs WHERE user_id = v_user_id;
+    DELETE FROM public.user_gamification WHERE user_id = v_user_id;
+    DELETE FROM public.user_login_history WHERE user_id = v_user_id;
+    DELETE FROM public.user_activity_logs WHERE user_id = v_user_id;
+    DELETE FROM public.coach_messages WHERE thread_id IN (SELECT id FROM public.coach_threads WHERE user_id = v_user_id);
+    DELETE FROM public.coach_threads WHERE user_id = v_user_id;
+    DELETE FROM public.user_feedback WHERE user_id = v_user_id;
+    DELETE FROM public.email_delivery_logs WHERE user_id = v_user_id;
+    DELETE FROM public.email_preferences WHERE user_id = v_user_id;
+    DELETE FROM public.user_activity WHERE user_id = v_user_id;
+    DELETE FROM public.profiles WHERE id = v_user_id;
+
+    -- C. Delete from auth.users (cascades sessions, identities, MFA)
+    DELETE FROM auth.users WHERE id = v_user_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'deleted_user_id', v_user_id,
+        'email', v_email,
+        'timestamp', NOW()
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.delete_user_account() FROM public;
+GRANT EXECUTE ON FUNCTION public.delete_user_account() TO authenticated;
+
+-- Atomic admin user deletion function (Administrator Service)
+CREATE OR REPLACE FUNCTION public.admin_delete_user(target_user_id UUID)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, storage
+AS $$
+DECLARE
+    v_admin_id UUID;
+    v_target_email TEXT;
+BEGIN
+    v_admin_id := auth.uid();
+    IF v_admin_id IS NULL OR NOT public.is_admin() THEN
+        RAISE EXCEPTION 'Access denied: Only authorized administrators may delete user accounts';
+    END IF;
+
+    IF v_admin_id = target_user_id THEN
+        RAISE EXCEPTION 'Operation blocked: Cannot delete the currently authenticated administrator account';
+    END IF;
+
+    SELECT email INTO v_target_email FROM auth.users WHERE id = target_user_id;
+    IF v_target_email = 'sham111205s@gmail.com' THEN
+        RAISE EXCEPTION 'Operation blocked: Cannot delete the primary administrator account';
+    END IF;
+
+    -- A. Purge user files from storage.objects
+    DELETE FROM storage.objects
+    WHERE bucket_id = 'medical-reports'
+      AND (storage.foldername(name))[1] = target_user_id::text;
+
+    -- B. Explicitly delete user records from all application tables
+    DELETE FROM public.medical_reports WHERE user_id = target_user_id;
+    DELETE FROM public.health_profiles WHERE user_id = target_user_id;
+    DELETE FROM public.user_deficiencies WHERE user_id = target_user_id;
+    DELETE FROM public.user_favorites WHERE user_id = target_user_id;
+    DELETE FROM public.user_search_history WHERE user_id = target_user_id;
+    DELETE FROM public.user_meal_logs WHERE user_id = target_user_id;
+    DELETE FROM public.user_gamification WHERE user_id = target_user_id;
+    DELETE FROM public.user_login_history WHERE user_id = target_user_id;
+    DELETE FROM public.user_activity_logs WHERE user_id = target_user_id;
+    DELETE FROM public.coach_messages WHERE thread_id IN (SELECT id FROM public.coach_threads WHERE user_id = target_user_id);
+    DELETE FROM public.coach_threads WHERE user_id = target_user_id;
+    DELETE FROM public.user_feedback WHERE user_id = target_user_id;
+    DELETE FROM public.email_delivery_logs WHERE user_id = target_user_id;
+    DELETE FROM public.email_preferences WHERE user_id = target_user_id;
+    DELETE FROM public.user_activity WHERE user_id = target_user_id;
+    DELETE FROM public.profiles WHERE id = target_user_id;
+
+    -- C. Delete from auth.users
+    DELETE FROM auth.users WHERE id = target_user_id;
+
+    -- D. Record audit log in public.admin_audit_logs
+    INSERT INTO public.admin_audit_logs (admin_id, action, target_type, target_id, details)
+    VALUES (v_admin_id, 'DELETE_USER', 'user', target_user_id::text, jsonb_build_object('target_email', v_target_email));
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'deleted_user_id', target_user_id,
+        'target_email', v_target_email,
+        'timestamp', NOW()
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.admin_delete_user(UUID) FROM public;
+GRANT EXECUTE ON FUNCTION public.admin_delete_user(UUID) TO authenticated;
+

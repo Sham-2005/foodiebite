@@ -9,11 +9,13 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
-  Modal
+  Modal,
+  Platform,
+  useWindowDimensions
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import storage, { getItemSync, removeItemSync } from '../services/storage';
+import storage, { getItemSync, removeItemSync, removeItem } from '../services/storage';
 import {
   Users,
   MessageSquare,
@@ -83,6 +85,17 @@ import {
   apiAdminGetAuditLogs
 } from '../services/api';
 import AppLayout from '../components/AppLayout';
+
+export const ADMIN_THEME = {
+  bg: '#0F1117',
+  card: '#171B24',
+  cardHover: '#1E2430',
+  textPrimary: '#F8FAFC',
+  textSecondary: '#CBD5E1',
+  textMuted: '#94A3B8',
+  border: '#2D3442',
+  accent: '#FF6B35'
+};
 
 // Helpers
 const formatDateTime = (dateVal) => {
@@ -193,8 +206,13 @@ const formatDateOnly = (dateVal) => {
 
 export default function AdminDashboardScreen() {
   const navigation = useNavigation();
-
   const { user, logout } = useApp();
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const isMobile = width < 768;
+  const isSmallPhone = width < 380;
+  const isTablet = width >= 768 && width < 1024;
+  const isDesktop = width >= 1024;
 
   // ── AUTHORIZED ADMINISTRATOR AUTHENTICATION STATE ────────
   // Sole authorized administrator: sham111205s@gmail.com
@@ -246,12 +264,23 @@ export default function AdminDashboardScreen() {
     } catch (e) {
       console.error('Logout error:', e);
     }
+    try {
+      await Promise.all([
+        removeItem('nb_token'),
+        removeItem('nb_active_session'),
+        removeItem('nb_active_user'),
+        removeItem('nb_mock_active'),
+        removeItem('foodiebite_admin_session'),
+        removeItem('foodiebite_redirect_after_login'),
+      ]);
+    } catch (_) {}
     removeItemSync('nb_token');
     removeItemSync('nb_active_session');
+    removeItemSync('nb_active_user');
     removeItemSync('nb_mock_active');
     removeItemSync('foodiebite_admin_session');
     removeItemSync('foodiebite_redirect_after_login');
-    if (typeof window !== 'undefined' && window.location) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
       window.location.href = '/signin';
     } else {
       navigation.reset({ index: 0, routes: [{ name: 'SignIn' }] });
@@ -455,7 +484,7 @@ export default function AdminDashboardScreen() {
 
   // Tab state: defaults to 'overview' (Main Dashboard) or URL query parameter
   const [activeTab, setActiveTab] = useState(() => {
-    if (typeof window !== 'undefined') {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
       try {
         const p = new URLSearchParams(window.location.search).get('tab');
         if (p && ['overview', 'users', 'campaigns', 'foods', 'analytics', 'feedback', 'settings'].includes(p)) {
@@ -523,17 +552,23 @@ export default function AdminDashboardScreen() {
     setUserDetailsError(null);
   };
 
-  // Browser back/forward popstate listener
+  // Browser back/forward popstate listener (Web only)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
     const onPop = () => {
-      const sp = new URLSearchParams(window.location.search);
-      const tabParam = sp.get('tab') || 'overview';
-      setActiveTab(tabParam);
-      setSelectedUserId(null);
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        const tabParam = sp.get('tab') || 'overview';
+        setActiveTab(tabParam);
+        setSelectedUserId(null);
+      } catch (_) { }
     };
     window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
+    return () => {
+      if (typeof window.removeEventListener === 'function') {
+        window.removeEventListener('popstate', onPop);
+      }
+    };
   }, []);
 
   // Dedicated Tab Navigation (for footer and top navigation)
@@ -544,14 +579,14 @@ export default function AdminDashboardScreen() {
       // Always return admin to main Admin Dashboard view, reset inspection, update URL to /admin
       handleBackToUsersList();
       setUserSearch('');
-      if (typeof window !== 'undefined' && window.history) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.history && typeof window.history.pushState === 'function') {
         window.history.pushState({ tab: 'overview' }, '', '/admin');
       }
     } else {
       if (tabId !== 'users') {
         handleBackToUsersList();
       }
-      if (typeof window !== 'undefined' && window.history) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.history && typeof window.history.pushState === 'function') {
         window.history.pushState({ tab: tabId }, '', `/admin?tab=${tabId}`);
       }
     }
@@ -660,7 +695,7 @@ export default function AdminDashboardScreen() {
   };
 
   const handleRejectRequest = async (id) => {
-    const reason = typeof window !== 'undefined' && window.prompt
+    const reason = (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.prompt === 'function')
       ? window.prompt('Enter rejection reason for merchant:', 'Does not meet menu standards')
       : 'Does not meet menu standards';
     if (reason !== null) {
@@ -795,28 +830,83 @@ export default function AdminDashboardScreen() {
 
   return (
     <AppLayout noPadding footer={<AdminFooter activeTab={activeTab} onTabSelect={handleTabSelect} />} hideNearby={true}>
-      <BackHeader title="Admin Dashboard" right={
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={styles.adminAuthPill}>
-            <View style={styles.onlineDot} />
-            <Text style={styles.adminAuthPillText} numberOfLines={1}>
-              sham111205s@gmail.com
-            </Text>
+      {/* ── Responsive Admin Header ──────────────────────── */}
+      <View style={[
+        styles.adminHeaderContainer,
+        { paddingTop: Math.max(insets.top, 12) }
+      ]}>
+        {/* Main Header Bar */}
+        <View style={styles.adminHeaderMainRow}>
+          {/* Left: Back button & Title */}
+          <View style={styles.adminHeaderLeft}>
+            <TouchableOpacity
+              onPress={() => {
+                if (navigation.canGoBack()) navigation.goBack();
+                else navigation.navigate('Home');
+              }}
+              style={styles.adminBackBtn}
+              activeOpacity={0.7}
+              accessibilityLabel="Back"
+            >
+              <ArrowLeft size={18} color="#fff" />
+            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Shield size={18} color={C.orange} />
+              <Text style={styles.adminHeaderTitle} numberOfLines={1}>
+                {isSmallPhone ? 'Admin' : 'Admin Dashboard'}
+              </Text>
+            </View>
           </View>
-          <TouchableOpacity onPress={loadData} style={{ padding: 4 }}>
-            <RefreshCw size={15} color={C.orange} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={handleAdminLogout}
-            style={styles.adminLogoutBtn}
-            role="button"
-            aria-label="Sign out of Admin Dashboard"
-          >
-            <LogOut size={12} color="#EF4444" style={{ marginRight: 3 }} />
-            <Text style={styles.adminLogoutBtnText}>Logout</Text>
-          </TouchableOpacity>
+
+          {/* Right Controls */}
+          <View style={styles.adminHeaderRight}>
+            {!isMobile && (
+              <View style={styles.adminAuthPill}>
+                <View style={styles.onlineDot} />
+                <Text style={styles.adminAuthPillText} numberOfLines={1}>
+                  sham111205s@gmail.com
+                </Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              onPress={loadData}
+              style={styles.adminHeaderIconBtn}
+              activeOpacity={0.7}
+              accessibilityLabel="Refresh Data"
+            >
+              <RefreshCw size={15} color={C.orange} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleAdminLogout}
+              style={styles.adminLogoutBtn}
+              activeOpacity={0.7}
+              role="button"
+              accessibilityLabel="Sign out of Admin Dashboard"
+            >
+              <LogOut size={13} color="#EF4444" style={{ marginRight: 4 }} />
+              <Text style={styles.adminLogoutBtnText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      } />
+
+        {/* Mobile Sub-Header: Clean Profile & Status Bar */}
+        {isMobile && (
+          <View style={styles.adminHeaderSubRow}>
+            <View style={styles.adminAuthPillMobile}>
+              <View style={styles.onlineDot} />
+              <Text style={styles.adminAuthPillText} numberOfLines={1}>
+                sham111205s@gmail.com
+              </Text>
+            </View>
+            <View style={styles.adminSystemStatusBadge}>
+              <View style={styles.systemStatusDot} />
+              <Text style={styles.adminSystemStatusText}>System Active</Text>
+            </View>
+          </View>
+        )}
+      </View>
 
       {/* Global Admin Action Alert Banner */}
       {actionBanner && (
@@ -870,47 +960,80 @@ export default function AdminDashboardScreen() {
                   </Text>
                 </View>
 
-                {/* Metric Cards Grid */}
-                <View style={{ gap: 12 }}>
-                  <View style={{ flexDirection: 'row', gap: 12 }}>
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => handleTabSelect('users')}
-                      style={styles.metricCard}
-                    >
-                      <Users size={20} color={C.orange} style={{ marginBottom: 8 }} />
+                {/* Metric Cards Grid - Responsive: 1 col on narrow screens, 2 col on mobile, 4 col on tablet/desktop */}
+                <View style={[
+                  styles.metricsGridContainer,
+                  { flexDirection: isSmallPhone ? 'column' : 'row', flexWrap: 'wrap', gap: 10 }
+                ]}>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => handleTabSelect('users')}
+                    style={[
+                      styles.metricCard,
+                      {
+                        width: isSmallPhone ? '100%' : (isMobile ? '48.5%' : '23.5%'),
+                        minHeight: 90
+                      }
+                    ]}
+                  >
+                    <View style={styles.metricCardTop}>
+                      <Users size={18} color={C.orange} />
                       <Text style={styles.metricValue}>{users.length}</Text>
-                      <Text style={styles.metricSub}>Registered Users Directory</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => handleTabSelect('users')}
-                      style={styles.metricCard}
-                    >
-                      <UserCheck size={20} color="#10B981" style={{ marginBottom: 8 }} />
-                      <Text style={styles.metricValue}>{users.filter(u => !u.disabled).length}</Text>
-                      <Text style={styles.metricSub}>Active Consumer Accounts</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={{ flexDirection: 'row', gap: 12 }}>
-                    <View style={styles.metricCard}>
-                      <ShieldCheck size={20} color="#38BDF8" style={{ marginBottom: 8 }} />
-                      <Text style={styles.metricValue}>Active</Text>
-                      <Text style={styles.metricSub}>System Platform Health</Text>
                     </View>
+                    <Text style={styles.metricSub} numberOfLines={2}>Registered Users Directory</Text>
+                  </TouchableOpacity>
 
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => handleTabSelect('feedback')}
-                      style={styles.metricCard}
-                    >
-                      <MessageSquare size={20} color="#F59E0B" style={{ marginBottom: 8 }} />
-                      <Text style={styles.metricValue}>{feedback.length}</Text>
-                      <Text style={styles.metricSub}>User Reviews & Feedback</Text>
-                    </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => handleTabSelect('users')}
+                    style={[
+                      styles.metricCard,
+                      {
+                        width: isSmallPhone ? '100%' : (isMobile ? '48.5%' : '23.5%'),
+                        minHeight: 90
+                      }
+                    ]}
+                  >
+                    <View style={styles.metricCardTop}>
+                      <UserCheck size={18} color="#10B981" />
+                      <Text style={styles.metricValue}>{users.filter(u => !u.disabled).length}</Text>
+                    </View>
+                    <Text style={styles.metricSub} numberOfLines={2}>Active Consumer Accounts</Text>
+                  </TouchableOpacity>
+
+                  <View
+                    style={[
+                      styles.metricCard,
+                      {
+                        width: isSmallPhone ? '100%' : (isMobile ? '48.5%' : '23.5%'),
+                        minHeight: 90
+                      }
+                    ]}
+                  >
+                    <View style={styles.metricCardTop}>
+                      <ShieldCheck size={18} color="#38BDF8" />
+                      <Text style={styles.metricValue}>Active</Text>
+                    </View>
+                    <Text style={styles.metricSub} numberOfLines={2}>System Platform Health</Text>
                   </View>
+
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => handleTabSelect('feedback')}
+                    style={[
+                      styles.metricCard,
+                      {
+                        width: isSmallPhone ? '100%' : (isMobile ? '48.5%' : '23.5%'),
+                        minHeight: 90
+                      }
+                    ]}
+                  >
+                    <View style={styles.metricCardTop}>
+                      <MessageSquare size={18} color="#F59E0B" />
+                      <Text style={styles.metricValue}>{feedback.length}</Text>
+                    </View>
+                    <Text style={styles.metricSub} numberOfLines={2}>User Reviews & Feedback</Text>
+                  </TouchableOpacity>
                 </View>
 
                 {/* Quick Navigation Panels */}
@@ -1295,8 +1418,15 @@ export default function AdminDashboardScreen() {
 
                   {/* Table Container */}
                   <View style={styles.tableCard}>
+                    {isMobile && (
+                      <View style={styles.mobileTableHint}>
+                        <Text style={styles.mobileTableHintText}>
+                          ↔ Swipe horizontally to view all columns
+                        </Text>
+                      </View>
+                    )}
                     <ScrollView horizontal showsHorizontalScrollIndicator={true} contentContainerStyle={{ minWidth: '100%' }}>
-                      <View style={{ minWidth: 700, flex: 1 }}>
+                      <View style={{ minWidth: 680, flex: 1 }}>
                         {/* Table Header Row */}
                         <View style={styles.tableHeaderRow}>
                           <Text style={[styles.tableHeaderCell, { width: 44, textAlign: 'center' }]}>S.No</Text>
@@ -1601,7 +1731,7 @@ export default function AdminDashboardScreen() {
                           {req.rejectionReason ? (
                             <View style={[styles.reqNotesBox, { borderColor: 'rgba(239, 68, 68, 0.3)' }]}>
                               <Text style={[styles.reqNotesText, { color: '#F87171' }]}>
-                                <Text style={{ fontWeight: '700' }}>Rejection Reason: </Text>
+                                <Text style={{ fontWeight: '700', color: '#F8FAFC' }}>Rejection Reason: </Text>
                                 {req.rejectionReason}
                               </Text>
                             </View>
@@ -1685,7 +1815,7 @@ export default function AdminDashboardScreen() {
                     </View>
                     <View style={styles.settingsInfoRow}>
                       <Text style={styles.settingsInfoLabel}>Session Auth Method:</Text>
-                      <Text style={styles.settingsInfoValue}>Firebase Identity & JWT Token</Text>
+                      <Text style={styles.settingsInfoValue}>Supabase Identity & JWT Token</Text>
                     </View>
                   </View>
 
@@ -1992,7 +2122,7 @@ export default function AdminDashboardScreen() {
                   CRITICAL: You are about to permanently destroy the account for{' '}
                   <Text style={{ color: '#fff', fontWeight: '700' }}>{confirmModal.user?.email}</Text>.
                   {'\n\n'}
-                  This will remove the user from Firebase Authentication, delete their Firestore documents, subcollections, favorites, meal logs, and all linked resources.
+                  This will remove the user from Supabase Authentication, delete their database records, favorites, meal logs, medical reports, and all linked resources.
                   {'\n\n'}
                   This action is irreversible.
                 </Text>
@@ -2077,11 +2207,14 @@ export default function AdminDashboardScreen() {
 }
 
 function AdminFooter({ activeTab, onTabSelect }) {
+  const { width } = useWindowDimensions();
+  const isMobile = width < 640;
+
   const navItems = [
     { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'campaigns', label: 'Campaigns', icon: Mail },
-    { id: 'foods', label: 'Food Management', icon: Utensils },
+    { id: 'foods', label: isMobile ? 'Foods' : 'Food Management', icon: Utensils },
     { id: 'analytics', label: 'Analytics', icon: BarChart2 },
     { id: 'feedback', label: 'Feedback', icon: MessageSquare },
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
@@ -2089,11 +2222,7 @@ function AdminFooter({ activeTab, onTabSelect }) {
 
   return (
     <View style={styles.adminFooterNav}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.adminFooterScroll}
-      >
+      <View style={styles.adminFooterInner}>
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -2107,7 +2236,7 @@ function AdminFooter({ activeTab, onTabSelect }) {
               aria-label={`Admin ${item.label}`}
             >
               <View style={[styles.adminFooterIconWrapper, isActive && styles.adminFooterIconActive]}>
-                <Icon size={19} color={isActive ? C.orange : '#94a3b8'} />
+                <Icon size={18} color={isActive ? ADMIN_THEME.accent : ADMIN_THEME.textMuted} />
               </View>
               <Text
                 style={[styles.adminFooterLabel, isActive && styles.adminFooterLabelActive]}
@@ -2118,12 +2247,82 @@ function AdminFooter({ activeTab, onTabSelect }) {
             </TouchableOpacity>
           );
         })}
-      </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // Overview Hero & System Control Center Styles
+  overviewHeroCard: {
+    backgroundColor: '#171B24',
+    borderWidth: 1.5,
+    borderColor: '#2D3442',
+    borderRadius: 14,
+    padding: 18,
+  },
+  overviewHeroTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#F8FAFC',
+  },
+  liveIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  liveText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  overviewHeroSub: {
+    fontSize: 13,
+    color: '#CBD5E1',
+    lineHeight: 18,
+  },
+  quickNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#171B24',
+    borderWidth: 1.5,
+    borderColor: '#2D3442',
+    borderRadius: 12,
+    padding: 14,
+  },
+  quickNavIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 107, 53, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickNavTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    marginBottom: 2,
+  },
+  quickNavSub: {
+    fontSize: 12,
+    color: '#94A3B8',
+    lineHeight: 16,
+  },
+
   tabsContainer: {
     borderBottomWidth: 1,
     borderColor: C.border,
@@ -2149,9 +2348,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   contentContainer: {
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 80,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 90,
     width: '100%',
     maxWidth: 1400,
     alignSelf: 'center',
@@ -2181,21 +2380,22 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   metricCard: {
-    flex: 1,
     backgroundColor: C.card,
     borderWidth: 1.5,
     borderColor: C.border,
     borderRadius: 14,
-    padding: 16,
+    padding: 12,
+    justifyContent: 'space-between',
   },
   metricValue: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     color: '#fff',
   },
   metricSub: {
     fontSize: 11,
     color: C.muted,
+    lineHeight: 15,
     marginTop: 2,
   },
   statusCard: {
@@ -2225,6 +2425,7 @@ const styles = StyleSheet.create({
   slaText: {
     fontSize: 11,
     fontWeight: '700',
+    color: '#F8FAFC',
   },
   statusRow: {
     flexDirection: 'row',
@@ -2291,6 +2492,7 @@ const styles = StyleSheet.create({
   adminTag: {
     fontSize: 9,
     fontWeight: '700',
+    color: '#FF6B35',
     backgroundColor: 'rgba(255,107,53,0.15)',
     paddingHorizontal: 5,
     paddingVertical: 1,
@@ -2348,6 +2550,7 @@ const styles = StyleSheet.create({
   filterTabText: {
     fontSize: 11,
     fontWeight: '700',
+    color: '#94A3B8',
   },
   feedbackCard: {
     backgroundColor: C.card,
@@ -2542,6 +2745,7 @@ const styles = StyleSheet.create({
   },
   biomarkerBadgeText: {
     fontSize: 10,
+    color: '#CBD5E1',
   },
   recommendedText: {
     fontSize: 11,
@@ -2644,6 +2848,7 @@ const styles = StyleSheet.create({
   dietBadgeText: {
     fontSize: 10,
     fontWeight: '700',
+    color: '#F8FAFC',
   },
 
   // ── User Details View Styles ─────────────────
@@ -2841,6 +3046,7 @@ const styles = StyleSheet.create({
   activityEventTitle: {
     fontSize: 12,
     fontWeight: '700',
+    color: '#F8FAFC',
   },
   activityEventDetails: {
     fontSize: 11,
@@ -2961,43 +3167,157 @@ const styles = StyleSheet.create({
     color: '#10B981',
     fontWeight: '600',
   },
+  adminHeaderContainer: {
+    backgroundColor: '#111318',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+  },
+  adminHeaderMainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 44,
+  },
+  adminHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    marginRight: 8,
+  },
+  adminBackBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  adminHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.3,
+  },
+  adminHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  adminHeaderIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 107, 53, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 53, 0.25)',
+  },
+  adminLogoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    paddingHorizontal: 10,
+    height: 34,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+  },
+  adminLogoutBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+  adminHeaderSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.04)',
+  },
   adminAuthPill: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(16, 185, 129, 0.12)',
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(16, 185, 129, 0.3)',
-    maxWidth: 130,
+    maxWidth: 160,
   },
-  onlineDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10B981',
-    marginRight: 5,
+  adminAuthPillMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    maxWidth: 200,
   },
   adminAuthPillText: {
     fontSize: 10,
     fontWeight: '700',
     color: '#10B981',
   },
-  adminLogoutBtn: {
+  onlineDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+    marginRight: 6,
+  },
+  adminSystemStatusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(239, 68, 68, 0.12)',
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    borderRadius: 6,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.25)',
+    borderColor: 'rgba(56, 189, 248, 0.25)',
   },
-  adminLogoutBtnText: {
+  systemStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#38BDF8',
+    marginRight: 5,
+  },
+  adminSystemStatusText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#EF4444',
+    color: '#38BDF8',
+  },
+  mobileTableHint: {
+    backgroundColor: 'rgba(255, 107, 53, 0.08)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 107, 53, 0.15)',
+  },
+  mobileTableHintText: {
+    fontSize: 11,
+    color: C.orange,
+    fontWeight: '600',
+  },
+  metricsGridContainer: {
+    width: '100%',
+  },
+  metricCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
   },
   adminAuthSegmentWrapper: {
     flexDirection: 'row',
@@ -3077,6 +3397,7 @@ const styles = StyleSheet.create({
   providerPillText: {
     fontSize: 9,
     fontWeight: '700',
+    color: '#F8FAFC',
   },
   userStatusBadge: {
     paddingHorizontal: 8,
@@ -3087,34 +3408,56 @@ const styles = StyleSheet.create({
   userStatusBadgeText: {
     fontSize: 10,
     fontWeight: '700',
+    color: '#F8FAFC',
   },
   adminFooterNav: {
     width: '100%',
-    backgroundColor: '#111318',
+    backgroundColor: '#0F1117',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    borderTopColor: '#2D3442',
     paddingVertical: 6,
     zIndex: 99,
   },
-  adminFooterScroll: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
+  adminFooterInner: {
     width: '100%',
-    minWidth: 460,
+    maxWidth: 1400,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 8,
   },
   adminFooterItem: {
     flex: 1,
-    minWidth: 58,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 2,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    minWidth: 0,
     gap: 3,
   },
   adminFooterItemActive: {
-    opacity: 1,
+    backgroundColor: 'rgba(255, 107, 53, 0.12)',
+  },
+  adminFooterIconWrapper: {
+    padding: 3,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  adminFooterIconActive: {
+    backgroundColor: 'rgba(255, 107, 53, 0.15)',
+  },
+  adminFooterLabel: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  adminFooterLabelActive: {
+    color: '#FF6B35',
+    fontWeight: '700',
   },
   paginationRow: {
     flexDirection: 'row',
@@ -3162,23 +3505,6 @@ const styles = StyleSheet.create({
   pageIndicatorText: {
     color: C.orange,
     fontSize: 11,
-    fontWeight: '700',
-  },
-  adminFooterIconWrapper: {
-    padding: 3,
-    borderRadius: 8,
-  },
-  adminFooterIconActive: {
-    backgroundColor: 'rgba(255, 107, 53, 0.12)',
-  },
-  adminFooterLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#94a3b8',
-    textAlign: 'center',
-  },
-  adminFooterLabelActive: {
-    color: C.orange,
     fontWeight: '700',
   },
   foodMgmtHeaderCard: {
@@ -3252,6 +3578,7 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.5,
+    color: '#F8FAFC',
   },
   reqCuisineSub: {
     fontSize: 12,
@@ -3485,6 +3812,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     fontWeight: '600',
+    color: '#F8FAFC',
   },
 
   // Notification Management Styles
@@ -3509,6 +3837,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     fontWeight: '600',
+    color: '#F8FAFC',
   },
   notificationGroupCard: {
     backgroundColor: C.card2,
@@ -3630,6 +3959,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 11,
     fontWeight: '600',
+    color: '#F8FAFC',
   },
 
   // Modal Styles (Cross-platform Web Dialog)

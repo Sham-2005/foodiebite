@@ -3,7 +3,7 @@
 //  Reliability-First Food Controller using the 4-Tier Priority System
 // ─────────────────────────────────────────────────────────────
 
-const admin = require('firebase-admin');
+const { admin } = require('../config/firebase');
 const { getSupabaseClient, getSupabaseAdmin } = require('../config/supabase');
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

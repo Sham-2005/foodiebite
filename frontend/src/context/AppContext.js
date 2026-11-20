@@ -6,7 +6,7 @@ import {
 } from '../services/api';
 import { onAuthStateChange as onSupabaseAuthStateChange, getCurrentSession as getSupabaseCurrentSession } from '../services/supabaseAuthService';
 import { getMyProfile as getSupabaseMyProfile } from '../services/supabaseProfileService';
-import { isSupabaseConfigured } from '../config/supabaseClient';
+import { isSupabaseConfigured, getSupabaseClient } from '../config/supabaseClient';
 import {
   saveSession,
   getSession,
@@ -15,7 +15,20 @@ import {
   getPreferences,
   refreshSessionExpiration
 } from '../services/localStorageService';
-import storage, { getItemSync, removeItemSync } from '../services/storage';
+import storage, { getItemSync, removeItemSync, removeItem } from '../services/storage';
+
+const DEFAULT_PREFERENCES = {
+  dietType: 'Vegetarian',
+  spiceLevel: 'Medium',
+  cuisines: ['indian'],
+  healthGoals: ['healthy_eating'],
+  country: 'in',
+  allergies: [],
+  fasting: { active: false, type: null, allowedCategories: [], restrictedCategories: [] },
+  maxCalories: null,
+  minProtein: null,
+  minGrade: 'c',
+};
 
 const AppContext = createContext(null);
 
@@ -23,18 +36,7 @@ export function AppProvider({ children }) {
   const [user, setUserState] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
-  const [preferences, setPreferencesState] = useState({
-    dietType: 'Vegetarian',
-    spiceLevel: 'Medium',
-    cuisines: ['indian'],
-    healthGoals: ['healthy_eating'],
-    country: 'in',
-    allergies: [],
-    fasting: { active: false, type: null, allowedCategories: [], restrictedCategories: [] },
-    maxCalories: null,
-    minProtein: null,
-    minGrade: 'c',
-  });
+  const [preferences, setPreferencesState] = useState(DEFAULT_PREFERENCES);
 
   const [favorites, setFavorites] = useState({ foods: [] });
   const [savedFoodObjects, setSavedFoodObjects] = useState([]);
@@ -113,7 +115,7 @@ export function AppProvider({ children }) {
     }
   }, []);
 
-  // ── Rehydrate session on mount (Supabase Auth prioritized, Firebase fallback) ────────────────
+  // ── Rehydrate session on mount (Supabase Auth) ────────────────
   useEffect(() => {
     if (isSupabaseConfigured) {
       // 1. Initial check for existing active session
@@ -254,6 +256,80 @@ export function AppProvider({ children }) {
     }
   }, []);
 
+  // ── Supabase Realtime Cross-Platform Sync ────────────
+  useEffect(() => {
+    if (!isSupabaseConfigured || !user?.id) return;
+    const client = getSupabaseClient();
+    if (!client || typeof client.channel !== 'function') return;
+
+    // 1. Listen for changes to current user's profile (edits, disabled status, remote deletion)
+    const profileChannel = client
+      .channel(`realtime_profile_${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${user.id}`
+        },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            console.log('🔔 [Realtime] User profile deleted remotely — signing out');
+            logout();
+          } else if (payload.eventType === 'UPDATE' && payload.new) {
+            console.log('🔔 [Realtime] Profile updated remotely — synchronizing state');
+            if (payload.new.disabled === true || payload.new.account_status === 'disabled') {
+              logout();
+            } else {
+              updateUser({
+                name: payload.new.name || payload.new.full_name,
+                dietType: payload.new.diet_type,
+                age: payload.new.age,
+                gender: payload.new.gender,
+                preferences: payload.new.preferences || preferences
+              });
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    // 2. Listen for changes to current user's saved favorites
+    const favChannel = client
+      .channel(`realtime_favs_${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_favorites',
+          filter: `user_id=eq.${user.id}`
+        },
+        () => {
+          console.log('🔔 [Realtime] Favorites updated remotely — refreshing favorites');
+          apiGetFavorites().then(favData => {
+            if (favData) {
+              setSavedFoodObjects(favData.favoriteFoods || []);
+              setFavorites({
+                foods: (favData.favoriteFoods || []).map(f => f.foodId),
+              });
+            }
+          }).catch(() => {});
+        }
+      )
+      .subscribe();
+
+    return () => {
+      try {
+        if (client.removeChannel) {
+          client.removeChannel(profileChannel);
+          client.removeChannel(favChannel);
+        }
+      } catch (_) {}
+    };
+  }, [user?.id]);
+
   // ── Set user after login/register ────────────────────
   const setUser = useCallback((userData) => {
     if (!userData) {
@@ -262,6 +338,7 @@ export function AppProvider({ children }) {
       clearSession();
       setFavorites({ foods: [] });
       setSavedFoodObjects([]);
+      setPreferencesState(DEFAULT_PREFERENCES);
       return;
     }
     setUserState(userData);
@@ -282,13 +359,27 @@ export function AppProvider({ children }) {
     clearToken();
     clearSession();
     clearAdminSession();
+    try {
+      await Promise.all([
+        removeItem('nb_token'),
+        removeItem('nb_active_session'),
+        removeItem('nb_active_user'),
+        removeItem('nb_mock_active'),
+        removeItem('foodiebite_admin_session'),
+        removeItem('foodiebite_redirect_after_login'),
+      ]);
+    } catch (err) {
+      console.warn('[AppContext] Storage removal notice on logout:', err?.message || err);
+    }
     removeItemSync('nb_token');
     removeItemSync('nb_active_session');
+    removeItemSync('nb_active_user');
     removeItemSync('nb_mock_active');
     removeItemSync('foodiebite_admin_session');
     removeItemSync('foodiebite_redirect_after_login');
     setFavorites({ foods: [] });
     setSavedFoodObjects([]);
+    setPreferencesState(DEFAULT_PREFERENCES);
   }
 
   // ── Partial update user fields (e.g. after profile edit) ──────────

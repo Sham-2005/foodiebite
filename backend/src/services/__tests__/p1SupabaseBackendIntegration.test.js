@@ -12,7 +12,8 @@ require('dotenv').config();
 
 const assert = require('assert');
 const jwt = require('jsonwebtoken');
-const { getSupabaseClient, getUserSupabaseClient, getSupabaseAdmin, isSupabaseConfigured } = require('../../config/supabase');
+const supabaseConfig = require('../../config/supabase');
+const { getSupabaseClient, getUserSupabaseClient, getSupabaseAdmin, isSupabaseConfigured } = supabaseConfig;
 const userController = require('../../controllers/userController');
 const coachController = require('../../controllers/coachController');
 const medicalController = require('../../controllers/medicalController');
@@ -91,6 +92,168 @@ async function runAllP1IntegrationTests() {
 
   // ── TEST GROUP 2: User Profile & Security ──────────────────
   console.log('\n[GROUP 2: User Profile & Privilege Protection]');
+
+  const originalGetUserSupabaseClient = supabaseConfig.getUserSupabaseClient;
+
+  // In-memory test store simulating Supabase PostgreSQL tables
+  const mockDb = {
+    profiles: new Map(),
+    user_favorites: [],
+    user_search_history: []
+  };
+
+  mockDb.profiles.set(testUserId, {
+    id: testUserId,
+    email: testUserEmail,
+    name: 'Initial Gourmet',
+    role: 'user',
+    diet_type: 'Vegetarian',
+    dietType: 'Vegetarian',
+    account_status: 'active',
+    disabled: false,
+    preferences: {
+      dietType: 'Vegetarian',
+      spiceLevel: 'Medium',
+      cuisines: ['indian'],
+      allergies: []
+    }
+  });
+
+  function createMockSupabaseClient(tables, realClient) {
+    return {
+      storage: realClient.storage,
+      from(table) {
+        if (!tables[table]) {
+          return realClient.from(table);
+        }
+        let op = 'select';
+        let filters = [];
+        let insertData = null;
+        let updateData = null;
+        let isSingle = false;
+
+        const chain = {
+          select(fields) {
+            return chain;
+          },
+          insert(data) {
+            op = 'insert';
+            insertData = data;
+            return chain;
+          },
+          upsert(data, opts) {
+            op = 'upsert';
+            insertData = data;
+            return chain;
+          },
+          update(data) {
+            op = 'update';
+            updateData = data;
+            return chain;
+          },
+          delete() {
+            op = 'delete';
+            return chain;
+          },
+          eq(col, val) {
+            filters.push({ col, val: String(val) });
+            return chain;
+          },
+          order() {
+            return chain;
+          },
+          limit() {
+            return chain;
+          },
+          maybeSingle() {
+            isSingle = true;
+            return chain;
+          },
+          single() {
+            isSingle = true;
+            return chain;
+          },
+          async then(resolve, reject) {
+            try {
+              if (table === 'profiles') {
+                const idFilter = filters.find(f => f.col === 'id');
+                const targetId = idFilter ? idFilter.val : testUserId;
+                if (op === 'select') {
+                  const p = tables.profiles.get(targetId);
+                  return resolve({ data: p ? { ...p } : null, error: null });
+                }
+                if (op === 'update') {
+                  const existing = tables.profiles.get(targetId) || {};
+                  const updated = { ...existing, ...updateData };
+                  tables.profiles.set(targetId, updated);
+                  return resolve({ data: updated, error: null });
+                }
+                if (op === 'upsert' || op === 'insert') {
+                  tables.profiles.set(insertData.id, insertData);
+                  return resolve({ data: insertData, error: null });
+                }
+                if (op === 'delete') {
+                  tables.profiles.delete(targetId);
+                  return resolve({ data: null, error: null });
+                }
+              }
+
+              if (table === 'user_favorites') {
+                if (op === 'select') {
+                  const uFilter = filters.find(f => f.col === 'user_id');
+                  const list = tables.user_favorites.filter(f => !uFilter || String(f.user_id) === uFilter.val);
+                  return resolve({ data: [...list], error: null });
+                }
+                if (op === 'upsert') {
+                  const idx = tables.user_favorites.findIndex(f => String(f.user_id) === String(insertData.user_id) && String(f.food_id) === String(insertData.food_id));
+                  const item = { id: 'fav_' + Date.now(), ...insertData };
+                  if (idx >= 0) {
+                    tables.user_favorites[idx] = item;
+                  } else {
+                    tables.user_favorites.push(item);
+                  }
+                  return resolve({ data: item, error: null });
+                }
+                if (op === 'delete') {
+                  tables.user_favorites = tables.user_favorites.filter(f => {
+                    return !filters.every(flt => String(f[flt.col]) === flt.val);
+                  });
+                  return resolve({ data: null, error: null });
+                }
+              }
+
+              if (table === 'user_search_history') {
+                if (op === 'insert') {
+                  const item = { id: 'search_' + Date.now(), ...insertData };
+                  tables.user_search_history.push(item);
+                  return resolve({ data: item, error: null });
+                }
+                if (op === 'select') {
+                  const uFilter = filters.find(f => f.col === 'user_id');
+                  const list = tables.user_search_history.filter(s => !uFilter || String(s.user_id) === uFilter.val);
+                  return resolve({ data: [...list], error: null });
+                }
+                if (op === 'delete') {
+                  const uFilter = filters.find(f => f.col === 'user_id');
+                  tables.user_search_history = tables.user_search_history.filter(s => uFilter && String(s.user_id) !== uFilter.val);
+                  return resolve({ data: null, error: null });
+                }
+              }
+
+              return resolve({ data: null, error: null });
+            } catch (err) {
+              reject(err);
+            }
+          }
+        };
+        return chain;
+      }
+    };
+  }
+
+  supabaseConfig.getUserSupabaseClient = (token) => {
+    return createMockSupabaseClient(mockDb, getSupabaseClient());
+  };
 
   await runTest('Profile Retrieval: GET /api/user/profile handles user session', async () => {
     const req = {
@@ -361,6 +524,9 @@ async function runAllP1IntegrationTests() {
     assert.strictEqual(res.jsonData.success, true);
     assert.ok(Array.isArray(res.jsonData.reports), 'reports must be an array');
   });
+
+  // Restore original client function
+  supabaseConfig.getUserSupabaseClient = originalGetUserSupabaseClient;
 
   // ── SUMMARY REPORT ────────────────────────────────────────
   console.log('\n======================================================');

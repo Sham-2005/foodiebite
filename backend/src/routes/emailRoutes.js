@@ -337,31 +337,51 @@ router.post('/campaigns/:id/retry', campaignStartLimiter, secureAdminEmailGuard,
 
 /**
  * POST /api/email/welcome
- * Automated welcome email to authenticated user (idempotent)
+ * Automated welcome email to authenticated user or newly registered user (idempotent)
  */
-router.post('/welcome', emailRateLimiter, protect, async (req, res) => {
+router.post('/welcome', emailRateLimiter, async (req, res) => {
   try {
-    const user = req.user;
+    let user = null;
+
+    // 1. Try bearer token first if present
+    if (req.headers.authorization) {
+      await new Promise((resolve) => {
+        protect(req, res, () => {
+          user = req.user;
+          resolve();
+        });
+      });
+      if (res.headersSent) return;
+    }
+
+    // 2. Fall back to user passed in request body
+    if (!user && req.body && req.body.user && req.body.user.email) {
+      user = req.body.user;
+    }
+
     if (!user || !user.email) {
       return res.status(400).json({
         success: false,
-        message: 'Authenticated user email required for welcome email'
+        message: 'Valid user email required for welcome email'
       });
     }
 
-    const result = await brevoService.sendWelcomeEmail(user);
+    const emailAutomationService = require('../services/emailAutomationService');
+    const result = await emailAutomationService.sendWelcomeEmail(user);
     if (result.skipped) {
       return res.status(200).json({
         success: true,
         message: 'Welcome email was already dispatched previously (duplicate prevented).',
-        skipped: true
+        skipped: true,
+        reason: result.reason
       });
     }
 
     return res.status(200).json({
       success: true,
       message: `Welcome email sent successfully to ${user.email}`,
-      id: result.messageId
+      id: result.messageId,
+      provider: result.provider
     });
 
   } catch (err) {
@@ -449,6 +469,12 @@ const handleUnsubscribe = async (req, res) => {
 
   try {
     await brevoService.unsubscribeUser({ email, token, campaignId, reason: 'one_click_link' });
+    try {
+      const emailAutomationService = require('../services/emailAutomationService');
+      await emailAutomationService.unsubscribeUserDaily(email);
+    } catch (unsubErr) {
+      console.warn('⚠️ Automated email daily unsubscribe warning:', unsubErr.message);
+    }
 
     if (req.method === 'POST') {
       return res.status(200).json({
@@ -605,6 +631,115 @@ router.get('/daily-recommendations/preview', secureAdminEmailGuard, async (req, 
     const recData = await dailyRecommendationService.buildDailyRecommendationForUser(sampleUser, options);
     return res.status(200).json({ success: true, ...recData });
   } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+//  AUTOMATED EMAIL SYSTEM: PREFERENCES, LOGS & DAILY QUEUE
+// ─────────────────────────────────────────────────────────────
+
+const emailAutomationService = require('../services/emailAutomationService');
+
+/**
+ * GET /api/email/preferences
+ * Returns email preferences for the authenticated user
+ */
+router.get('/preferences', protect, async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.uid;
+    const prefs = await emailAutomationService.getUserEmailPreferences(userId);
+    return res.status(200).json({ success: true, preferences: prefs });
+  } catch (err) {
+    console.error('❌ /api/email/preferences GET error:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * PUT /api/email/preferences
+ * Updates email preferences for the authenticated user
+ */
+router.put('/preferences', protect, async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.uid;
+    const updated = await emailAutomationService.updateUserEmailPreferences(userId, req.body);
+    return res.status(200).json({
+      success: true,
+      message: 'Email preferences updated successfully.',
+      preferences: updated
+    });
+  } catch (err) {
+    console.error('❌ /api/email/preferences PUT error:', err.message);
+    return res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * POST /api/email/daily-trigger
+ * Triggers a daily recommendation email:
+ * - If admin and body.processQueue === true: runs the full queue
+ * - If authenticated user: sends daily recommendation email to that user
+ */
+router.post('/daily-trigger', protect, async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.uid;
+    const isAdmin = req.user.role === 'admin' || req.user.email === 'sham111205s@gmail.com';
+
+    if (req.body.processQueue && isAdmin) {
+      const summary = await emailAutomationService.processDailyEmailQueue({ force: Boolean(req.body.force) });
+      return res.status(200).json({
+        success: true,
+        message: `Daily email queue processed for ${summary.totalProcessed} users.`,
+        data: summary
+      });
+    }
+
+    // Single-user trigger
+    const targetUserId = (isAdmin && req.body.userId) ? req.body.userId : userId;
+    const result = await emailAutomationService.sendDailyRecommendationEmail(targetUserId, {
+      force: Boolean(req.body.force),
+      previewOnly: Boolean(req.body.previewOnly)
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: result.skipped ? 'Daily email skipped (already sent today or disabled).' : 'Daily recommendation email sent.',
+      result
+    });
+  } catch (err) {
+    console.error('❌ /api/email/daily-trigger error:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * GET /api/email/delivery-logs
+ * Retrieves email delivery logs for the authenticated user
+ */
+router.get('/delivery-logs', protect, async (req, res) => {
+  try {
+    const userId = req.user.id || req.user.uid;
+    const isAdmin = req.user.role === 'admin' || req.user.email === 'sham111205s@gmail.com';
+    const targetUserId = (isAdmin && req.query.userId) ? req.query.userId : userId;
+
+    const supabase = emailAutomationService.getSupabaseClient();
+    let query = supabase
+      .from('email_delivery_logs')
+      .select('*')
+      .order('sent_at', { ascending: false })
+      .limit(req.query.limit ? parseInt(req.query.limit, 10) : 20);
+
+    if (!isAdmin || !req.query.all) {
+      query = query.eq('user_id', targetUserId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return res.status(200).json({ success: true, logs: data || [] });
+  } catch (err) {
+    console.error('❌ /api/email/delivery-logs error:', err.message);
     return res.status(500).json({ success: false, message: err.message });
   }
 });

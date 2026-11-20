@@ -4,7 +4,6 @@
 //  Enforces Strict Cryptographic Signature Verification:
 //    1. Supabase Access Tokens (via Supabase Auth API / SUPABASE_JWT_SECRET)
 //    2. Backend Application Tokens (via JWT_SECRET)
-//    3. Firebase ID Tokens (via Firebase Admin SDK)
 //  ZERO Unverified Base64 or Unsigned Fallbacks Permitted.
 //  Strict Administrator Authorization: Only sham111205s@gmail.com
 // ─────────────────────────────────────────────────────────────
@@ -12,7 +11,6 @@
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs');
-const { getFirebaseAdmin, getFirestoreDb } = require('../config/firebase');
 
 /**
  * Resolves Supabase configuration safely across environments.
@@ -162,31 +160,8 @@ function verifyLocalToken(token) {
   }
 }
 
-/**
- * Verifies Firebase ID tokens via Firebase Admin SDK if configured.
- */
-async function verifyFirebaseToken(token) {
-  try {
-    const adminApp = getFirebaseAdmin();
-    if (adminApp && typeof adminApp.auth === 'function') {
-      const fbDecoded = await adminApp.auth().verifyIdToken(token);
-      return {
-        uid: fbDecoded.uid,
-        email: (fbDecoded.email || '').trim().toLowerCase(),
-        name: fbDecoded.name || '',
-        role: fbDecoded.role || 'user',
-        provider: 'firebase',
-        tokenPayload: fbDecoded
-      };
-    }
-  } catch (_) {
-    return null;
-  }
-  return null;
-}
-
 // ── protect ───────────────────────────────────────────────────
-// Cryptographically verifies ID/access token across Supabase, Local JWT, and Firebase.
+// Cryptographically verifies ID/access token across Supabase and Local JWT.
 // Rejects unauthenticated, forged, expired, and disabled accounts.
 // Strictly prevents privilege escalation.
 exports.protect = async (req, res, next) => {
@@ -216,12 +191,7 @@ exports.protect = async (req, res, next) => {
       decodedToken = verifyLocalToken(token);
     }
 
-    // 3. Try Firebase ID token verification (Firebase Admin SDK)
-    if (!decodedToken) {
-      decodedToken = await verifyFirebaseToken(token);
-    }
-
-    // 4. CRITICAL SECURITY GUARD:
+    // 3. CRITICAL SECURITY GUARD:
     // If all cryptographic verifications fail, REJECT IMMEDIATELY.
     // Zero unverified fallback, zero unsigned base64 parsing.
     if (!decodedToken) {
@@ -230,7 +200,7 @@ exports.protect = async (req, res, next) => {
 
     const cleanEmail = (decodedToken.email || '').trim().toLowerCase();
 
-    // 5. Account Disabled Verification
+    // 4. Account Disabled Verification
     let isDisabled = false;
 
     // Check userStore
@@ -242,18 +212,18 @@ exports.protect = async (req, res, next) => {
       }
     } catch (_) {}
 
-    // Check Firestore (with 1500ms timeout protection) if connected
-    const db = getFirestoreDb();
-    if (!isDisabled && db && decodedToken.uid) {
+    // Check Supabase profiles table if connected
+    if (!isDisabled && decodedToken.uid) {
       try {
-        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ __timedOut: true }), 1500));
-        const userDocResult = await Promise.race([
-          db.collection('users').doc(decodedToken.uid).get(),
-          timeoutPromise
-        ]);
-        if (userDocResult && !userDocResult.__timedOut && userDocResult.exists) {
-          const udata = userDocResult.data();
-          if (udata.disabled === true || udata.accountStatus === 'disabled') {
+        const { getSupabaseAdmin, getSupabaseClient } = require('../config/supabase');
+        const client = getSupabaseAdmin() || getSupabaseClient();
+        if (client) {
+          const { data: profile } = await client
+            .from('profiles')
+            .select('id, is_active')
+            .eq('id', decodedToken.uid)
+            .maybeSingle();
+          if (profile && profile.is_active === false) {
             isDisabled = true;
           }
         }
@@ -264,7 +234,7 @@ exports.protect = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Account is disabled. Please contact support.' });
     }
 
-    // 6. Strict Administrator Authorization:
+    // 5. Strict Administrator Authorization:
     // Only sham111205s@gmail.com is authorized to receive the admin role.
     // Never trust frontend-supplied or unverified role metadata.
     const AUTHORIZED_ADMIN_EMAIL = 'sham111205s@gmail.com';

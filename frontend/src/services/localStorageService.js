@@ -231,7 +231,7 @@ export function getFrequentItems(type, limit = 10) {
 export function saveChatHistory(threadId, messages) {
   try {
     const backup = getJSONSync('chat_threads', {});
-    
+
     backup[threadId] = messages.map(m => ({
       id: m.id,
       sender: m.sender,

@@ -1,23 +1,21 @@
 // ─────────────────────────────────────────────────────────────
 //  frontend/src/services/medicalReportsService.js
-//  FoodieBite Medical Report Supabase & Local Storage Service
+//  FoodieBite Standardized Supabase-Only Medical Report Service
 //  Architecture:
-//    - Supabase Storage: Secure storage bucket for medical PDFs / documents
-//    - Supabase PostgreSQL: Primary medical_reports table with RLS
-//    - Local Storage: Instant offline client rehydration & resilience
-//    - Backend API: Optional OCR extraction and analysis pipeline
+//    - Supabase Storage: Private bucket 'medical-reports' (RLS enforced)
+//    - Supabase PostgreSQL: Primary 'public.medical_reports' table (RLS enforced)
+//    - Supabase PostgreSQL: 'public.health_profiles' biomarker summary table
+//    - Supabase Realtime: Instant cross-platform sync (Web & Android)
+//    - ZERO permanent disk or localStorage/AsyncStorage persistence
 // ─────────────────────────────────────────────────────────────
 
 import { getSupabaseClient, isSupabaseConfigured } from '../config/supabaseClient.js';
-import { getItemSync, setItemSync, getJSONSync } from './storage.js';
-import {
-  apiUploadMedicalReport,
-  apiDeleteMedicalReport,
-  apiGetMedicalReports,
-  getLocalActiveUser,
-} from './api.js';
+import { apiUploadMedicalReport, apiDeleteMedicalReport } from './api.js';
 
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
+
+// Ephemeral in-memory report cache for smooth UI rendering (never written to disk/AsyncStorage)
+const ephemeralReportsCache = new Map();
 
 /**
  * Validate that the selected file is a valid PDF or image within size limits.
@@ -32,16 +30,18 @@ export function validateMedicalPdf(file) {
 
   const isSupported =
     mime === 'application/pdf' ||
+    mime === 'application/octet-stream' ||
     mime.startsWith('image/') ||
     name.endsWith('.pdf') ||
     name.endsWith('.jpg') ||
     name.endsWith('.jpeg') ||
-    name.endsWith('.png');
+    name.endsWith('.png') ||
+    name.endsWith('.webp');
 
   if (!isSupported) {
     return {
       valid: false,
-      error: 'Invalid file type. Supported formats: PDF, JPEG, and PNG documents.',
+      error: 'Invalid file type. Supported formats: PDF, JPEG, and PNG medical documents.',
     };
   }
 
@@ -57,85 +57,121 @@ export function validateMedicalPdf(file) {
 }
 
 /**
- * Local storage helpers for instant rehydration
+ * Ephemeral in-memory access helpers (Supabase is single source of truth; no permanent local writes)
  */
-function getStorageKey(userId) {
-  return `foodiebite_saved_reports_${userId || 'guest_user'}`;
-}
-
 export function getLocalReports(userId) {
-  try {
-    return getJSONSync(getStorageKey(userId), []);
-  } catch (_) {
-    return [];
-  }
+  if (!userId) return [];
+  const cached = ephemeralReportsCache.get(userId);
+  return Array.isArray(cached) ? cached : [];
 }
 
 export function saveLocalReport(userId, report) {
-  try {
-    const key = getStorageKey(userId);
-    const existing = getLocalReports(userId);
-    const rId = report.id || report._id;
-    const filtered = existing.filter(r => (r.id || r._id) !== rId);
-    filtered.unshift(report);
-    setItemSync(key, JSON.stringify(filtered.slice(0, 50)));
-  } catch (_) {}
+  if (!userId || !report) return;
+  const existing = getLocalReports(userId);
+  const rId = report.id || report._id;
+  const filtered = existing.filter(r => (r.id || r._id) !== rId);
+  filtered.unshift(report);
+  ephemeralReportsCache.set(userId, filtered.slice(0, 50));
 }
 
 export function removeLocalReport(userId, reportId) {
-  try {
-    const key = getStorageKey(userId);
-    const existing = getLocalReports(userId);
-    const filtered = existing.filter(r => (r.id || r._id) !== reportId);
-    setItemSync(key, JSON.stringify(filtered));
-  } catch (_) {}
+  if (!userId || !reportId) return;
+  const existing = getLocalReports(userId);
+  const filtered = existing.filter(r => (r.id || r._id) !== reportId);
+  ephemeralReportsCache.set(userId, filtered);
 }
 
 /**
- * Helper to normalize report document format across all providers.
+ * Generate a short-lived signed URL for a file in the private 'medical-reports' bucket.
+ * 
+ * @param {string} storagePath - Relative path inside 'medical-reports' bucket ({userId}/{reportId}-{filename})
+ * @param {number} expiresInSeconds - Expiration duration in seconds (default: 3600 = 1 hour)
+ * @returns {Promise<string>}
+ */
+export async function getSignedUrlForReport(storagePath, expiresInSeconds = 3600) {
+  if (!storagePath) return '';
+  const client = isSupabaseConfigured ? getSupabaseClient() : null;
+  if (!client) return '';
+
+  try {
+    const cleanPath = storagePath.startsWith('medical-reports/')
+      ? storagePath.replace(/^medical-reports\//, '')
+      : storagePath;
+
+    const { data, error } = await client.storage
+      .from('medical-reports')
+      .createSignedUrl(cleanPath, expiresInSeconds);
+
+    if (!error && data?.signedUrl) {
+      return data.signedUrl;
+    }
+  } catch (err) {
+    console.warn('medicalReportsService: getSignedUrl error:', err.message);
+  }
+  return '';
+}
+
+/**
+ * Normalizes report document format across all representations.
  */
 export function normalizeReport(id, data = {}) {
-  const patientInfo = data.extractedData?.patientInformation || data.analysis?.patientInfo || data.extracted_data?.patientInformation || {};
-  const medicalInfo = data.extractedData?.medicalInformation || data.analysis?.medicalInfo || data.extracted_data?.medicalInformation || {};
-  const testResults = data.extractedData?.testResults || data.analysis?.testResults || data.extracted_data?.testResults || data.analysis?.extractedTable || [];
+  const patientInfo = data.extractedData?.patientInformation ||
+    data.analysis?.patientInfo ||
+    data.extracted_data?.patientInformation || {};
+
+  const medicalInfo = data.extractedData?.medicalInformation ||
+    data.analysis?.medicalInfo ||
+    data.extracted_data?.medicalInformation || {};
+
+  const testResults = data.extractedData?.testResults ||
+    data.analysis?.testResults ||
+    data.extracted_data?.testResults ||
+    data.analysis?.extractedTable || [];
+
   const rawOcrText = data.rawOcrText || data.raw_ocr_text || data.analysis?.rawOcrText || '';
 
-  // Determine uploaded date string
-  let uploadedDate = data.uploadedAtIso || data.uploadDate || data.uploadedAt || data.created_at;
+  let uploadedDate = data.created_at || data.uploadedAtIso || data.uploadDate || data.uploadedAt;
   if (uploadedDate && typeof uploadedDate === 'object' && uploadedDate.toISOString) {
     uploadedDate = uploadedDate.toISOString();
   } else if (!uploadedDate) {
     uploadedDate = new Date().toISOString();
   }
 
-  const resolveUrl = (u) => {
-    if (!u) return '';
-    if (typeof u === 'string' && (u.startsWith('/uploads') || u.startsWith('uploads/'))) {
-      const backendBase = (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL)
-        ? process.env.REACT_APP_API_URL.replace(/\/api\/?$/, '')
-        : 'http://localhost:5000';
-      return `${backendBase}${u.startsWith('/') ? u : `/${u}`}`;
-    }
-    return u;
-  };
+  const rawStoragePath = data.storage_path || data.storagePath || '';
+  const cleanStoragePath = rawStoragePath.startsWith('medical-reports/')
+    ? rawStoragePath.replace(/^medical-reports\//, '')
+    : rawStoragePath;
 
-  const finalUrl = resolveUrl(data.fileUrl || data.downloadUrl || data.previewUrl || data.file_url || '');
+  const fileUrl = data.file_url || data.fileUrl || data.downloadUrl || data.previewUrl || '';
 
   return {
     id: id || data.id || data._id,
     _id: id || data.id || data._id,
-    userId: data.userId || data.user_id || '',
-    fileName: data.fileName || data.filename || data.originalName || data.report_name || 'Medical_Report.pdf',
-    reportName: data.reportName || data.report_name || data.fileName || data.filename || 'Medical Report',
-    storagePath: data.storagePath || data.storage_path || '',
-    storageProvider: data.storageProvider || (finalUrl.includes('supabase') ? 'supabase' : 'local'),
-    fileUrl: finalUrl,
-    downloadUrl: finalUrl,
-    previewUrl: finalUrl,
+    userId: data.user_id || data.userId || '',
+    user_id: data.user_id || data.userId || '',
+    fileName: data.original_filename || data.fileName || data.filename || data.originalName || data.report_name || 'Medical_Report.pdf',
+    original_filename: data.original_filename || data.fileName || data.filename || data.originalName || data.report_name || 'Medical_Report.pdf',
+    reportName: data.report_name || data.reportName || data.fileName || data.filename || 'Medical Report',
+    report_name: data.report_name || data.reportName || data.fileName || data.filename || 'Medical Report',
+    storagePath: cleanStoragePath,
+    storage_path: cleanStoragePath,
+    storageProvider: 'supabase',
+    fileUrl: fileUrl,
+    file_url: fileUrl,
+    downloadUrl: fileUrl,
+    previewUrl: fileUrl,
     reportDate: data.reportDate || patientInfo.reportDate || 'Not detected',
     uploadedAt: uploadedDate,
     uploadedAtIso: uploadedDate,
-    processingStatus: data.processingStatus || data.processing_status || (data.analysis?.analysisFailed ? 'ocr_failed' : 'completed'),
+    created_at: uploadedDate,
+    updated_at: data.updated_at || uploadedDate,
+    processingStatus: data.processing_status || data.processingStatus || 'completed',
+    processing_status: data.processing_status || data.processingStatus || 'completed',
+    documentType: data.document_type || data.documentType || 'digital_pdf',
+    document_type: data.document_type || data.documentType || 'digital_pdf',
+    ocrConfidence: Number(data.ocr_confidence || data.ocrConfidence || 95),
+    ocr_confidence: Number(data.ocr_confidence || data.ocrConfidence || 95),
+    notes: data.notes || '',
     extractedData: {
       patientInformation: {
         name: patientInfo.name || 'Not detected',
@@ -157,11 +193,15 @@ export function normalizeReport(id, data = {}) {
       testResults: Array.isArray(testResults) ? testResults : []
     },
     rawOcrText: rawOcrText,
+    raw_ocr_text: rawOcrText,
     analysis: data.analysis || {
       patientInfo,
       medicalInfo,
       testResults,
-      rawOcrText
+      rawOcrText,
+      wellnessConcerns: [],
+      healthScores: { overall: 100, overallLabel: 'Good' },
+      foodProfile: { foodsToPrefer: [], foodsToLimit: [] }
     }
   };
 }
@@ -174,10 +214,10 @@ function promiseWithTimeout(promise, ms, fallbackValue = null) {
 }
 
 /**
- * Generate a standard UUID v4 for records and files.
+ * Generate standard UUID v4 for records and file identification.
  */
 function generateUUID() {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
@@ -188,312 +228,383 @@ function generateUUID() {
 }
 
 /**
- * Upload medical document, save metadata to Supabase & local storage.
+ * Upload medical document to Supabase Storage & save metadata to Supabase PostgreSQL.
+ * Strict upload sequence with rollback on database failure.
  */
-export async function uploadAndPersistMedicalReport(file, notes = '', onProgress = () => {}) {
-  // 1. Validation
+export async function uploadAndPersistMedicalReport(file, notes = '', onProgress = () => { }) {
+  // 1. Validate file format and size
   const validation = validateMedicalPdf(file);
   if (!validation.valid) {
     throw new Error(validation.error);
   }
 
-  // 2. Identify Authenticated User
+  // 2. Authenticate current user via Supabase
   const client = isSupabaseConfigured ? getSupabaseClient() : null;
-  let activeUser = null;
-  if (client) {
-    try {
-      const { data } = await client.auth.getUser();
-      activeUser = data?.user || null;
-    } catch (_) {}
+  if (!client) {
+    throw new Error('Supabase client is unavailable. Please verify connection.');
   }
-  const localUser = getLocalActiveUser();
-  const userId = activeUser?.id || localUser?.uid || localUser?.id || 'guest_user';
 
+  const { data: authData, error: authErr } = await client.auth.getUser();
+  const activeUser = authData?.user;
+  if (authErr || !activeUser || !activeUser.id) {
+    throw new Error('Authentication required. Please sign in to upload medical reports.');
+  }
+
+  const userId = activeUser.id;
   const reportId = generateUUID();
   const nowIso = new Date().toISOString();
-  const fileName = file.name || file.fileName || 'medical_report.pdf';
-  const reportName = fileName.replace(/\.[^/.]+$/, '');
-  const storagePath = `medical-reports/${userId}/${reportId}-${fileName}`;
 
-  let uploadedFileUrl = '';
+  const originalRawName = file.name || file.fileName || 'medical_report.pdf';
+  const cleanFileName = originalRawName.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const reportName = cleanFileName.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
 
-  // 3. Optional Supabase Storage Bucket Upload
-  if (client && activeUser) {
+  // Enforce correct storage path format: {user_id}/{report_id}-{filename}
+  // Matches RLS policy: (storage.foldername(name))[1] = auth.uid()::text
+  const storagePath = `${userId}/${reportId}-${cleanFileName}`;
+
+  // 3. Upload physical file to Supabase Storage bucket 'medical-reports'
+  onProgress('Uploading document to secure Supabase Storage...');
+  let fileBody = file;
+
+  // React Native file handling
+  if (file.uri && typeof fetch !== 'undefined') {
     try {
-      onProgress('Uploading document to secure storage...');
-      let fileBody = file;
-
-      // React Native file handling
-      if (file.uri && typeof fetch !== 'undefined') {
-        try {
-          const resp = await fetch(file.uri);
-          fileBody = await resp.blob();
-        } catch (_) {
-          fileBody = file;
-        }
-      }
-
-      const { data: uploadData, error: uploadErr } = await client.storage
-        .from('medical-reports')
-        .upload(storagePath, fileBody, {
-          contentType: file.type || 'application/pdf',
-          upsert: true,
-        });
-
-      if (!uploadErr && uploadData?.path) {
-        const { data: urlData } = client.storage
-          .from('medical-reports')
-          .getPublicUrl(uploadData.path);
-        uploadedFileUrl = urlData?.publicUrl || '';
-      }
-    } catch (storageErr) {
-      console.warn('Supabase storage upload notice (will use local/backend fallback):', storageErr.message);
+      const resp = await fetch(file.uri);
+      fileBody = await resp.blob();
+    } catch (_) {
+      fileBody = file;
     }
   }
 
-  // 4. Try Backend OCR extraction if available
+  const mimeType = file.type || (cleanFileName.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+
+  const { data: uploadData, error: uploadErr } = await client.storage
+    .from('medical-reports')
+    .upload(storagePath, fileBody, {
+      contentType: mimeType,
+      upsert: true,
+    });
+
+  if (uploadErr) {
+    if (
+      uploadErr.message?.toLowerCase().includes('bucket not found') ||
+      uploadErr.statusCode === '404' ||
+      uploadErr.status === 404
+    ) {
+      throw new Error(
+        `Storage upload failed: Bucket not found. The 'medical-reports' private storage bucket has not been provisioned in Supabase yet. Please execute the bucket creation SQL in the Supabase Dashboard SQL Editor or run 'node backend/scripts/provisionStorage.js'.`
+      );
+    }
+    throw new Error(`Storage upload failed: ${uploadErr.message}`);
+  }
+
+  const confirmedStoragePath = uploadData?.path || storagePath;
+
+  // 4. Generate short-lived signed URL for initial viewing/preview (bucket is private)
+  let initialSignedUrl = '';
+  try {
+    const { data: signedData } = await client.storage
+      .from('medical-reports')
+      .createSignedUrl(confirmedStoragePath, 3600);
+    initialSignedUrl = signedData?.signedUrl || '';
+  } catch (signErr) {
+    console.warn('Initial signed URL generation notice:', signErr.message);
+  }
+
+  // 5. Temporary backend OCR processing for biomarker extraction
   let backendReport = null;
   try {
-    onProgress('Extracting health insights...');
+    onProgress('Extracting health insights and clinical biomarkers...');
     let rawFile = file;
-    if (file && !(file instanceof Blob) && !(file instanceof File) && file.uri) {
-      try {
-        const fetched = await fetch(file.uri);
-        const blob = await fetched.blob();
-        rawFile = new File([blob], fileName, { type: file.type || 'application/pdf' });
-      } catch (_) {
-        rawFile = file;
+    const isNativeFile = typeof File !== 'undefined' && file instanceof File;
+    const isNativeBlob = typeof Blob !== 'undefined' && file instanceof Blob;
+
+    if (file && !isNativeBlob && !isNativeFile && file.uri) {
+      if (typeof File !== 'undefined') {
+        try {
+          const fetched = await fetch(file.uri);
+          const blob = await fetched.blob();
+          rawFile = new File([blob], cleanFileName, { type: mimeType });
+        } catch (_) {
+          rawFile = file;
+        }
+      } else {
+        rawFile = {
+          uri: file.uri,
+          name: cleanFileName,
+          type: mimeType,
+        };
       }
     }
+
     const apiCall = apiUploadMedicalReport(rawFile, notes, reportName);
-    const apiResponse = await promiseWithTimeout(apiCall, 15000, null);
+    const apiResponse = await promiseWithTimeout(apiCall, 20000, null);
     if (apiResponse?.report) {
       backendReport = apiResponse.report;
     }
   } catch (apiErr) {
-    console.warn('Backend OCR notice (falling back to direct Supabase record):', apiErr.message);
+    console.warn('Backend OCR notice (saving document with base clinical metadata):', apiErr.message);
   }
 
-  const patientInfo = backendReport?.analysis?.patientInfo || {};
-  const medicalInfo = backendReport?.analysis?.medicalInfo || {};
-  const testResults = backendReport?.analysis?.testResults || backendReport?.analysis?.extractedTable || [];
+  const patientInfo = backendReport?.extractedData?.patientInformation ||
+    backendReport?.analysis?.patientInfo || {};
+  const medicalInfo = backendReport?.extractedData?.medicalInformation ||
+    backendReport?.analysis?.medicalInfo || {};
+  const testResults = backendReport?.extractedData?.testResults ||
+    backendReport?.analysis?.testResults ||
+    backendReport?.analysis?.extractedTable || [];
   const rawOcrText = backendReport?.rawOcrText || '';
 
-  const reportDoc = {
-    id: reportId,
-    _id: reportId,
-    user_id: userId,
-    userId: userId,
-    fileName: fileName,
-    reportName: reportName,
-    storagePath: storagePath,
-    storageProvider: uploadedFileUrl ? 'supabase' : 'local',
-    fileUrl: uploadedFileUrl || backendReport?.fileUrl || '',
-    downloadUrl: uploadedFileUrl || backendReport?.downloadUrl || '',
-    previewUrl: uploadedFileUrl || backendReport?.previewUrl || '',
-    reportDate: patientInfo.reportDate && patientInfo.reportDate !== 'Not detected'
-      ? patientInfo.reportDate
-      : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-    uploadedAt: nowIso,
-    uploadedAtIso: nowIso,
-    processingStatus: 'completed',
-    extractedData: {
-      patientInformation: patientInfo,
-      medicalInformation: medicalInfo,
-      testResults: Array.isArray(testResults) ? testResults : []
-    },
-    rawOcrText: rawOcrText,
-    analysis: backendReport?.analysis || {
-      patientInfo,
-      medicalInfo,
-      testResults,
-      rawOcrText
-    }
+  // Determine valid document_type constraint
+  // CHECK (document_type IN ('digital_pdf', 'scanned_pdf', 'lab_image', 'manual_entry'))
+  const isImage = mimeType.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(cleanFileName);
+  const documentType = isImage ? 'lab_image' : 'digital_pdf';
+
+  const extractedDataPayload = {
+    patientInformation: patientInfo,
+    medicalInformation: medicalInfo,
+    testResults: Array.isArray(testResults) ? testResults : []
   };
 
-  const normalized = normalizeReport(reportId, reportDoc);
+  const analysisPayload = backendReport?.analysis || {
+    patientInfo,
+    medicalInfo,
+    testResults,
+    rawOcrText,
+    wellnessConcerns: [],
+    healthScores: { overall: 100, overallLabel: 'Good' },
+    foodProfile: { foodsToPrefer: [], foodsToLimit: [] }
+  };
 
-  // 5. Save to local storage for instant offline access
-  saveLocalReport(userId, normalized);
+  // 6. Save metadata to Supabase table public.medical_reports
+  onProgress('Saving verified report to Supabase database...');
+  const insertPayload = {
+    id: reportId,
+    user_id: userId,
+    report_name: reportName,
+    original_filename: cleanFileName,
+    storage_path: confirmedStoragePath,
+    file_url: initialSignedUrl || confirmedStoragePath,
+    file_size_bytes: file.size || file.fileSize || 0,
+    mime_type: mimeType,
+    document_type: documentType,
+    processing_status: 'completed',
+    ocr_confidence: Number(backendReport?.ocrConfidence || 95),
+    raw_ocr_text: rawOcrText,
+    notes: notes || '',
+    extracted_data: extractedDataPayload,
+    analysis: analysisPayload,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
 
-  // 6. Save metadata to Supabase medical_reports table
-  if (client && activeUser) {
+  const { error: insertErr } = await client
+    .from('medical_reports')
+    .insert(insertPayload);
+
+  // 7. ROLLBACK on database insertion failure
+  if (insertErr) {
+    console.error('Supabase medical_reports insert error:', insertErr.message);
     try {
-      onProgress('Saving report metadata to database...');
-      const { error: insertErr } = await client
-        .from('medical_reports')
-        .insert({
-          id: reportId,
-          user_id: activeUser.id,
-          report_name: reportName,
-          storage_path: storagePath,
-          file_url: reportDoc.fileUrl,
-          file_size_bytes: file.size || file.fileSize || 0,
-          mime_type: file.type || 'application/pdf',
-          document_type: 'medical_report',
-          processing_status: 'completed',
-          ocr_confidence: 95,
-          raw_ocr_text: rawOcrText,
-          notes: notes || '',
-          extracted_data: reportDoc.extractedData,
-          analysis: reportDoc.analysis,
-          created_at: nowIso,
-          updated_at: nowIso,
-        });
+      await client.storage.from('medical-reports').remove([confirmedStoragePath]);
+      console.log('Successfully rolled back uploaded storage file:', confirmedStoragePath);
+    } catch (rbErr) {
+      console.warn('Storage rollback warning:', rbErr.message);
+    }
+    throw new Error(`Database record creation failed: ${insertErr.message}. Upload rolled back.`);
+  }
 
-      if (insertErr) {
-        console.warn('Supabase medical_reports insert notice:', insertErr.message);
-      }
-    } catch (dbErr) {
-      console.warn('Supabase database save notice:', dbErr.message);
+  // 8. Synchronize consolidated health profile in public.health_profiles
+  if (analysisPayload?.healthScores || analysisPayload?.wellnessConcerns) {
+    try {
+      await client
+        .from('health_profiles')
+        .upsert({
+          user_id: userId,
+          overall_score: analysisPayload.healthScores?.overall ?? 100,
+          overall_label: analysisPayload.healthScores?.overallLabel || 'Good',
+          category_scores: analysisPayload.healthScores?.categories || {},
+          wellness_concerns: analysisPayload.wellnessConcerns || [],
+          food_profile: analysisPayload.foodProfile || {},
+          findings: analysisPayload.findings || [],
+          last_updated: nowIso
+        }, { onConflict: 'user_id' });
+    } catch (hpErr) {
+      console.warn('Health profile upsert notice:', hpErr.message);
     }
   }
 
-  onProgress('Report saved successfully.');
+  const normalized = normalizeReport(reportId, {
+    ...insertPayload,
+    fileUrl: initialSignedUrl,
+  });
+
+  saveLocalReport(userId, normalized);
+  onProgress('Report saved successfully to Supabase.');
   return normalized;
 }
 
 /**
- * Subscribe to medical reports:
- * Combines LocalStorage (instant 0ms) and Supabase database.
+ * Subscribe to medical reports exclusively via Supabase PostgreSQL & Realtime.
+ * Synchronizes seamlessly between Web and Android platforms.
  */
 export function subscribeToUserMedicalReports(userId, onUpdate, onError) {
   if (!userId) {
     onUpdate([]);
-    return () => {};
+    return () => { };
   }
 
   let active = true;
-
-  // 1. Immediately emit from local storage
-  const localCached = getLocalReports(userId);
-  if (localCached.length > 0) {
-    onUpdate(localCached.map(r => normalizeReport(r.id || r._id, r)));
-  }
-
-  const mergeAndEmit = (newReports) => {
-    if (!active) return;
-    const current = getLocalReports(userId);
-    const map = new Map();
-
-    current.forEach(r => map.set(r.id || r._id, r));
-    newReports.forEach(r => {
-      const norm = normalizeReport(r.id || r._id, r);
-      map.set(norm.id || norm._id, norm);
-      saveLocalReport(userId, norm);
-    });
-
-    const combined = Array.from(map.values());
-    combined.sort((a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0));
-    onUpdate(combined);
-  };
-
-  // 2. Fetch from Supabase PostgreSQL
   const client = isSupabaseConfigured ? getSupabaseClient() : null;
-  if (client) {
-    client
-      .from('medical_reports')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .then(({ data, error }) => {
-        if (!active) return;
-        if (!error && Array.isArray(data)) {
-          mergeAndEmit(data);
-        } else if (error) {
-          console.warn('Supabase medical_reports select notice:', error.message);
-        }
-      })
-      .catch(err => {
-        console.warn('Supabase reports fetch error:', err.message);
-      });
+
+  if (!client) {
+    onUpdate([]);
+    return () => { };
   }
 
-  // 3. Fetch from backend API if available
-  apiGetMedicalReports()
-    .then(res => {
+  // 1. Initial fetch from Supabase PostgreSQL
+  client
+    .from('medical_reports')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .then(async ({ data, error }) => {
       if (!active) return;
-      if (res?.reports && Array.isArray(res.reports)) {
-        mergeAndEmit(res.reports);
+      if (error) {
+        console.warn('Supabase medical_reports select notice:', error.message);
+        if (onError) onError(error);
+        return;
+      }
+
+      if (Array.isArray(data)) {
+        // Resolve signed URLs for each report
+        const normalizedList = await Promise.all(
+          data.map(async (r) => {
+            const norm = normalizeReport(r.id, r);
+            if (norm.storagePath && (!norm.fileUrl || norm.fileUrl === norm.storagePath)) {
+              const freshSigned = await getSignedUrlForReport(norm.storagePath);
+              if (freshSigned) norm.fileUrl = freshSigned;
+            }
+            return norm;
+          })
+        );
+
+        if (active) {
+          ephemeralReportsCache.set(userId, normalizedList);
+          onUpdate(normalizedList);
+        }
       }
     })
-    .catch(err => {
-      if (onError) onError(err);
+    .catch((err) => {
+      if (active && onError) onError(err);
     });
 
-  // 4. Real-time Supabase subscription if available
-  let subscriptionChannel = null;
-  if (client) {
-    try {
-      subscriptionChannel = client
-        .channel(`medical-reports-${userId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'medical_reports',
-            filter: `user_id=eq.${userId}`,
-          },
-          (payload) => {
-            if (!active) return;
-            if (payload.eventType === 'DELETE') {
-              removeLocalReport(userId, payload.old?.id);
-              const remaining = getLocalReports(userId);
-              onUpdate(remaining.map(r => normalizeReport(r.id || r._id, r)));
-            } else if (payload.new) {
-              mergeAndEmit([payload.new]);
+  // 2. Real-time Supabase postgres_changes channel
+  let channel = null;
+  try {
+    channel = client
+      .channel(`realtime-medical-reports-${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'medical_reports',
+          filter: `user_id=eq.${userId}`,
+        },
+        async (payload) => {
+          if (!active) return;
+          const current = getLocalReports(userId);
+
+          if (payload.eventType === 'INSERT' && payload.new) {
+            const norm = normalizeReport(payload.new.id, payload.new);
+            if (norm.storagePath) {
+              const freshSigned = await getSignedUrlForReport(norm.storagePath);
+              if (freshSigned) norm.fileUrl = freshSigned;
             }
+            const exists = current.some(r => (r.id || r._id) === norm.id);
+            const updated = exists
+              ? current.map(r => (r.id || r._id) === norm.id ? norm : r)
+              : [norm, ...current];
+            ephemeralReportsCache.set(userId, updated);
+            onUpdate(updated);
+          } else if (payload.eventType === 'UPDATE' && payload.new) {
+            const norm = normalizeReport(payload.new.id, payload.new);
+            if (norm.storagePath) {
+              const freshSigned = await getSignedUrlForReport(norm.storagePath);
+              if (freshSigned) norm.fileUrl = freshSigned;
+            }
+            const updated = current.map(r => (r.id || r._id) === norm.id ? norm : r);
+            ephemeralReportsCache.set(userId, updated);
+            onUpdate(updated);
+          } else if (payload.eventType === 'DELETE' && payload.old) {
+            const delId = payload.old.id;
+            const updated = current.filter(r => (r.id || r._id) !== delId);
+            ephemeralReportsCache.set(userId, updated);
+            onUpdate(updated);
           }
-        )
-        .subscribe();
-    } catch (_) {}
+        }
+      )
+      .subscribe();
+  } catch (subErr) {
+    console.warn('Realtime subscription notice:', subErr.message);
   }
 
   return () => {
     active = false;
-    if (subscriptionChannel && client) {
+    if (channel && client) {
       try {
-        client.removeChannel(subscriptionChannel);
-      } catch (_) {}
+        client.removeChannel(channel);
+      } catch (_) { }
     }
   };
 }
 
 /**
- * Delete a medical report from Supabase, local storage, and backend.
+ * Delete a medical report permanently from Supabase PostgreSQL & Supabase Storage.
  */
 export async function deleteCloudMedicalReport(reportId, storagePath, userId) {
   if (!reportId) return;
 
-  // 1. Delete from local storage
-  removeLocalReport(userId, reportId);
-
-  // 2. Delete from Supabase
   const client = isSupabaseConfigured ? getSupabaseClient() : null;
-  if (client) {
-    try {
-      await client
-        .from('medical_reports')
-        .delete()
-        .eq('id', reportId);
+  if (!client) {
+    throw new Error('Supabase client is unavailable.');
+  }
 
-      if (storagePath) {
-        await client.storage
-          .from('medical-reports')
-          .remove([storagePath]);
-      }
-    } catch (sbErr) {
-      console.warn('Supabase delete report notice:', sbErr.message);
+  // 1. Delete from Supabase PostgreSQL public.medical_reports
+  const { error: dbErr } = await client
+    .from('medical_reports')
+    .delete()
+    .eq('id', reportId);
+
+  if (dbErr) {
+    console.warn('Supabase delete medical report record notice:', dbErr.message);
+  }
+
+  // 2. Delete physical file from Supabase Storage bucket 'medical-reports'
+  if (storagePath) {
+    const cleanPath = storagePath.startsWith('medical-reports/')
+      ? storagePath.replace(/^medical-reports\//, '')
+      : storagePath;
+
+    const { error: storageErr } = await client.storage
+      .from('medical-reports')
+      .remove([cleanPath]);
+
+    if (storageErr) {
+      console.warn('Supabase delete storage file notice:', storageErr.message);
     }
   }
 
-  // 3. Delete from backend if available
+  // 3. Remove from ephemeral memory cache
+  if (userId) {
+    removeLocalReport(userId, reportId);
+  }
+
+  // 4. Optional backend cleanup notification
   try {
     await apiDeleteMedicalReport(reportId);
-  } catch (apiErr) {
-    console.warn('Backend delete report notice:', apiErr.message);
-  }
+  } catch (_) { }
 }
 
 export default {
@@ -501,6 +612,7 @@ export default {
   getLocalReports,
   saveLocalReport,
   removeLocalReport,
+  getSignedUrlForReport,
   normalizeReport,
   uploadAndPersistMedicalReport,
   subscribeToUserMedicalReports,

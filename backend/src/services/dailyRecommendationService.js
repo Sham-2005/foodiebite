@@ -343,7 +343,31 @@ async function buildDailyRecommendationForUser(user, options = {}) {
 
   let healthProfile = null;
   if (hasMedicalConsent && userId) {
-    healthProfile = persistentReportDb.getHealthProfile(userId);
+    try {
+      const { getSupabaseAdmin, getSupabaseClient } = require('../config/supabase');
+      const client = getSupabaseAdmin() || getSupabaseClient();
+      if (client) {
+        const { data: hp } = await client
+          .from('health_profiles')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (hp) {
+          healthProfile = {
+            overallScore: hp.overall_score,
+            overallLabel: hp.overall_label,
+            categoryScores: hp.category_scores || {},
+            wellnessConcerns: hp.wellness_concerns || [],
+            foodProfile: hp.food_profile || {},
+            findings: hp.findings || [],
+            lastUpdated: hp.last_updated
+          };
+        }
+      }
+    } catch (_) {}
+    if (!healthProfile) {
+      healthProfile = persistentReportDb.getHealthProfile(userId);
+    }
   }
 
   // 4. Construct Unified UserFoodProfile

@@ -1,90 +1,71 @@
-const admin = require('firebase-admin');
-const nodemailer = require('nodemailer');
+// ─────────────────────────────────────────────────────────────
+//  backend/src/controllers/feedbackController.js
+//  FoodieBite User Feedback Controller (Strict Supabase PostgreSQL)
+// ─────────────────────────────────────────────────────────────
 
-// Helper to get Firestore reference safely
-function getDb() {
-  try {
-    if (admin.apps.length === 0) {
-      if (process.env.FIREBASE_PROJECT_ID) {
-        admin.initializeApp({
-          projectId: process.env.FIREBASE_PROJECT_ID
-        });
-      } else {
-        admin.initializeApp({
-          projectId: 'mock-foodiebite'
-        });
-      }
-    }
-    return admin.firestore();
-  } catch (err) {
-    console.error('⚠️ Failed to initialize Firestore reference in feedbackController:', err.message);
-    return null;
-  }
-}
+'use strict';
 
 const feedbackStore = require('../services/feedbackStore');
+const mailService = require('../services/mailService');
 
 /**
  * Submit feedback (POST /api/feedback)
  */
 exports.submitFeedback = async (req, res, next) => {
   try {
-    const { name, email, rating, message, category } = req.body;
-    const uid = req.user ? req.user.uid : 'anonymous';
+    const { name, email, rating, message, category } = req.body || {};
+    const userId = req.user ? (req.user.id || req.user.uid) : null;
 
     if (!name || !email || !message) {
       return res.status(400).json({ success: false, message: 'Name, email, and message are required.' });
     }
 
-    const feedbackId = `feedback-${Date.now()}`;
     const feedbackDoc = {
-      id: feedbackId,
-      uid,
-      name,
-      email: email.toLowerCase(),
+      userId,
+      uid: userId,
+      name: String(name).trim(),
+      email: String(email).trim().toLowerCase(),
       category: category || 'general',
       rating: Number(rating || 5),
-      message,
-      status: 'pending', // pending | reviewed | resolved
-      reviewedBy: null,
-      reviewedAt: null,
-      internalNotes: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      message: String(message).trim(),
+      status: 'pending',
+      createdAt: new Date().toISOString()
     };
 
-    await feedbackStore.addFeedback(feedbackDoc);
+    const saved = await feedbackStore.addFeedback(feedbackDoc);
 
     // 1. Send Contact Us Confirmation Email to User
     try {
-      await mailService.sendFeedbackConfirmationEmail({
-        name: feedbackDoc.name,
-        email: feedbackDoc.email,
-        feedbackId: feedbackDoc.id,
-        message: feedbackDoc.message,
-        rating: feedbackDoc.rating
-      });
-      console.log(`✉️ [Feedback] Contact Us confirmation sent to ${feedbackDoc.email}`);
-    } catch (userEmailErr) {
-      console.warn('⚠️ [Feedback] User confirmation email failed (safe catch):', userEmailErr.message);
-    }
+      if (mailService && typeof mailService.sendFeedbackConfirmationEmail === 'function') {
+        mailService.sendFeedbackConfirmationEmail({
+          name: saved.name,
+          email: saved.email,
+          feedbackId: saved.id,
+          message: saved.message,
+          rating: saved.rating
+        }).catch(err => {
+          console.warn('⚠️ [Feedback] User confirmation email note:', err.message);
+        });
+      }
+    } catch (_) {}
 
     // 2. Send Alert Notification to Admin
     try {
-      await mailService.sendFeedbackAdminAlert({
-        name: feedbackDoc.name,
-        email: feedbackDoc.email,
-        rating: feedbackDoc.rating,
-        message: feedbackDoc.message,
-        feedbackId: feedbackDoc.id,
-        createdAt: feedbackDoc.createdAt
-      });
-      console.log(`✉️ [Feedback] Admin alert dispatched for ticket ${feedbackDoc.id}`);
-    } catch (adminEmailErr) {
-      console.warn('⚠️ [Feedback] Admin alert email failed (safe catch):', adminEmailErr.message);
-    }
+      if (mailService && typeof mailService.sendFeedbackAdminAlert === 'function') {
+        mailService.sendFeedbackAdminAlert({
+          name: saved.name,
+          email: saved.email,
+          rating: saved.rating,
+          message: saved.message,
+          feedbackId: saved.id,
+          createdAt: saved.createdAt
+        }).catch(err => {
+          console.warn('⚠️ [Feedback] Admin alert email note:', err.message);
+        });
+      }
+    } catch (_) {}
 
-    res.status(201).json({ success: true, feedback: feedbackDoc });
+    return res.status(201).json({ success: true, feedback: saved });
   } catch (err) {
     next(err);
   }
@@ -96,35 +77,37 @@ exports.submitFeedback = async (req, res, next) => {
 exports.resolveFeedback = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { replyMessage, status = 'resolved', internalNotes } = req.body;
+    const { replyMessage, status = 'resolved', internalNotes } = req.body || {};
     const adminUser = req.user;
 
     const feedback = await feedbackStore.getFeedbackById(id);
+    if (!feedback) {
+      return res.status(404).json({ success: false, message: `Feedback ticket ${id} not found` });
+    }
+
     const updated = await feedbackStore.updateFeedback(id, {
       status,
-      replyMessage: replyMessage || feedback?.replyMessage || null,
-      internalNotes: internalNotes !== undefined ? internalNotes : (feedback?.internalNotes || null),
+      internalNotes: internalNotes !== undefined ? internalNotes : (feedback.internalNotes || null),
       reviewedBy: adminUser?.email || adminUser?.id || 'admin@foodiebite.com',
       reviewedAt: new Date().toISOString()
     });
 
-    // Send email reply to user if replyMessage is supplied and feedback was loaded
-    if (feedback && replyMessage && feedback.email) {
+    if (replyMessage && feedback.email) {
       try {
-        const mailService = require('../services/mailService');
-        await mailService.sendFeedbackResolutionEmail({
-          name: feedback.name,
-          email: feedback.email,
-          replyMessage,
-          originalMessage: feedback.message
-        });
-        console.log(`✉️ [Feedback] Resolution reply sent to ${feedback.email}`);
+        if (mailService && typeof mailService.sendFeedbackResolutionEmail === 'function') {
+          await mailService.sendFeedbackResolutionEmail({
+            name: feedback.name,
+            email: feedback.email,
+            replyMessage,
+            originalMessage: feedback.message
+          });
+        }
       } catch (emailErr) {
-        console.warn('⚠️ [Feedback] Resolution email failed (safe catch):', emailErr.message);
+        console.warn('⚠️ [Feedback] Resolution email note:', emailErr.message);
       }
     }
 
-    res.status(200).json({ success: true, message: `Feedback resolved successfully`, feedback: updated });
+    return res.status(200).json({ success: true, message: 'Feedback resolved successfully in Supabase', feedback: updated });
   } catch (err) {
     next(err);
   }
@@ -137,7 +120,7 @@ exports.deleteFeedback = async (req, res, next) => {
   try {
     const { id } = req.params;
     await feedbackStore.deleteFeedback(id);
-    res.status(200).json({ success: true, message: 'Feedback deleted successfully' });
+    return res.status(200).json({ success: true, message: 'Feedback deleted successfully from Supabase' });
   } catch (err) {
     next(err);
   }

@@ -738,7 +738,7 @@ export default function CompareScreen() {
 
         {/* ── 4. COMPARISON OUTPUT RESULTS ─────────────────────── */}
         {comparison && (
-          <div ref={resultsRef} style={{ width: '100%' }}>
+          <View ref={resultsRef} style={{ width: '100%' }}>
             <View style={styles.comparisonBox}>
               {/* Winner Decision Card */}
               <View style={styles.coachBox}>
@@ -872,7 +872,7 @@ export default function CompareScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-          </div>
+          </View>
         )}
       </ScrollView>
     </AppLayout>

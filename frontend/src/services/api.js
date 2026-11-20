@@ -29,7 +29,7 @@ export const getDocs = null;
 export const deleteDoc = null;
 export const arrayUnion = null;
 export const arrayRemove = null;
-import { loginWithGoogle } from './googleAuth.js';
+import { loginWithGoogle, signOutFromGoogle } from './googleAuth.js';
 import {
   registerWithEmail as supabaseRegisterWithEmail,
   loginWithEmail as supabaseLoginWithEmail,
@@ -46,7 +46,7 @@ import {
   getProfileById as supabaseGetProfileById,
   updateProfile as supabaseUpdateProfileData,
 } from './supabaseProfileService.js';
-import { isSupabaseConfigured } from '../config/supabaseClient.js';
+import { isSupabaseConfigured, getSupabaseClient } from '../config/supabaseClient.js';
 import {
   getRecommendations as getClientRecommendations,
   searchByQuery as searchClientFoods,
@@ -54,7 +54,7 @@ import {
   normaliseProduct
 } from './openFoodFacts.js';
 import { trackScannedFood, clearSession } from './localStorageService.js';
-import storage, { getItemSync, setItemSync, removeItemSync, getJSONSync } from './storage.js';
+import storage, { getItemSync, setItemSync, removeItemSync, removeItem, setItem, getJSONSync } from './storage.js';
 
 // ── LOCAL STORAGE ENGINE FALLBACK ─────────────────────────────
 const MOCK_DELAY = 150; // Milliseconds to simulate network request
@@ -95,6 +95,9 @@ export function saveLocalActiveUser(user) {
   if (!user) {
     try {
       removeItemSync('nb_mock_active');
+      removeItemSync('nb_active_user');
+      removeItemSync('nb_token');
+      removeItemSync('nb_active_session');
     } catch (_) { }
     return null;
   }
@@ -168,8 +171,9 @@ export function saveLocalActiveUser(user) {
     delete sanitizedUser.secret;
     delete sanitizedUser.apiKey;
 
-    // Persist to nb_mock_active
+    // Persist to nb_mock_active and nb_active_user
     setItemSync('nb_mock_active', JSON.stringify(sanitizedUser));
+    setItemSync('nb_active_user', JSON.stringify(sanitizedUser));
 
     // Also sync to local users store for lookup
     if (cleanEmail) {
@@ -797,11 +801,32 @@ export async function apiLogout() {
   clearToken();
   clearAdminSession();
   saveLocalActiveUser(null);
+  try {
+    await Promise.all([
+      removeItem('nb_token'),
+      removeItem('nb_active_session'),
+      removeItem('nb_active_user'),
+      removeItem('nb_mock_active'),
+      removeItem('foodiebite_admin_session'),
+      removeItem('foodiebite_redirect_after_login')
+    ]);
+  } catch (storageErr) {
+    console.warn('[apiLogout] Storage removal notice on logout:', storageErr?.message || storageErr);
+  }
   removeItemSync('nb_token');
   removeItemSync('nb_active_session');
+  removeItemSync('nb_active_user');
   removeItemSync('nb_mock_active');
   removeItemSync('foodiebite_admin_session');
   removeItemSync('foodiebite_redirect_after_login');
+
+  if (typeof signOutFromGoogle === 'function') {
+    try {
+      await signOutFromGoogle();
+    } catch (err) {
+      console.warn('Google Sign-Out notice:', err?.message || err);
+    }
+  }
 
   if (isSupabaseConfigured) {
     try {
@@ -1278,14 +1303,37 @@ export async function apiSendSmtpTestEmail(toEmail, subject, message) {
   return data;
 }
 
-export async function apiSendWelcomeEmail() {
-  const token = getToken();
+export async function apiSendWelcomeEmail(userData = null) {
+  let token = null;
+  if (isSupabaseConfigured) {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data } = await client.auth.getSession();
+        if (data?.session?.access_token) {
+          token = data.session.access_token;
+        }
+      } catch (_) { }
+    }
+  }
+  if (!token) token = getToken();
+
+  const user = userData || getLocalActiveUser();
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/email/welcome`, {
     method: 'POST',
-    headers
+    headers,
+    body: JSON.stringify({
+      user: user ? {
+        id: user.id || user.uid,
+        email: user.email,
+        name: user.name || user.full_name || (user.email ? user.email.split('@')[0] : 'Explorer'),
+        dietType: user.dietType,
+        city: user.city
+      } : null
+    })
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.message || 'Failed to send welcome email');
@@ -1306,48 +1354,55 @@ export async function apiLoginWithGoogle() {
 }
 
 export async function apiDeleteAccount() {
-  if (isFirebaseConfigured) {
-    const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
+  const token = getToken();
+  const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const uid = user.uid;
-    const userDocRef = doc(db, 'users', uid);
-    const docSnap = await getDoc(userDocRef);
+  // 1. Call backend account deletion endpoint (strictly validates server-side deletion)
+  const res = await fetch(`${API_BASE}/user/account`, {
+    method: 'DELETE',
+    headers
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.success) {
+    throw new Error(data.message || 'Failed to delete user account on backend.');
+  }
 
-    if (docSnap.exists()) {
-      const reports = docSnap.data().medicalReports || [];
-      for (const report of reports) {
-        const rId = report.id || report._id;
-        if (rId) {
+  // 2. Cascade delete from client-side Supabase if configured (for RLS tables)
+  if (isSupabaseConfigured) {
+    try {
+      const client = getSupabaseClient();
+      if (client && client.auth) {
+        const { data: userData } = await client.auth.getUser();
+        const uid = userData?.user?.id;
+        if (uid) {
+          // Purge Storage files
           try {
-            await apiDeleteMedicalReport(rId);
-          } catch (delErr) {
-            console.warn('Failed to delete report on account deletion:', delErr.message);
-          }
+            const { data: files } = await client.storage.from('medical-reports').list(uid);
+            if (files && files.length > 0) {
+              await client.storage.from('medical-reports').remove(files.map(f => `${uid}/${f.name}`)).catch(() => {});
+            }
+          } catch (_) {}
+          await client.from('medical_reports').delete().eq('user_id', uid).catch(() => {});
+          await client.from('health_profiles').delete().eq('user_id', uid).catch(() => {});
+          await client.from('user_favorites').delete().eq('user_id', uid).catch(() => {});
+          await client.from('user_search_history').delete().eq('user_id', uid).catch(() => {});
+          await client.from('user_feedback').delete().eq('user_id', uid).catch(() => {});
+          await client.from('profiles').delete().eq('id', uid).catch(() => {});
         }
       }
+    } catch (sbErr) {
+      console.warn('⚠️ [DeleteAccount] Client-side cleanup note:', sbErr.message);
     }
-
-    // Delete master user profile document users/{uid}
-    await deleteDoc(userDocRef);
-
-    // Delete Firebase Auth account
-    await user.delete();
-    clearToken();
-    return { success: true };
-  } else {
-    // Mock delete fallback
-    await sleep(MOCK_DELAY);
-    const active = getLocalActiveUser();
-    if (active) {
-      const users = getLocalUsers();
-      delete users[active.email];
-      saveLocalUsers(users);
-      saveLocalActiveUser(null);
-    }
-    clearToken();
-    return { success: true };
   }
+
+  // 3. Clear local session state
+  saveLocalActiveUser(null);
+
+  // 4. Complete session cleanup
+  await apiLogout();
+  return { success: true };
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -1430,94 +1485,109 @@ export async function apiGetNotificationSettings() {
     marketingEmails: false
   };
 
-  if (isFirebaseConfigured) {
-    const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
+  if (isSupabaseConfigured) {
+    try {
+      const client = getSupabaseClient();
+      if (client && client.auth) {
+        const { data: userData } = await client.auth.getUser();
+        const uid = userData?.user?.id;
+        if (uid) {
+          const { data, error } = await client
+            .from('profiles')
+            .select('notification_settings')
+            .eq('id', uid)
+            .maybeSingle();
 
-    const docRef = doc(db, 'users', user.uid, 'settings', 'preferences');
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      return { success: true, settings: { ...defaultPrefs, ...snap.data() } };
+          if (!error && data && data.notification_settings) {
+            return { success: true, settings: { ...defaultPrefs, ...data.notification_settings } };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('apiGetNotificationSettings Supabase fetch error:', err.message);
     }
-    return { success: true, settings: defaultPrefs };
-  } else {
-    const active = getLocalActiveUser();
-    if (!active) throw new Error('Not authenticated');
-    const key = `nb_settings_${active.id}`;
-    const stored = getItemSync(key);
-    return {
-      success: true,
-      settings: stored ? JSON.parse(stored) : defaultPrefs
-    };
   }
+
+  return { success: true, settings: defaultPrefs };
 }
 
 // 4. Update Notification Settings
 export async function apiUpdateNotificationSettings(settings) {
-  if (isFirebaseConfigured) {
-    const user = auth.currentUser;
-    if (!user) throw new Error('Not authenticated');
+  if (isSupabaseConfigured) {
+    const client = getSupabaseClient();
+    if (client && client.auth) {
+      const { data: userData } = await client.auth.getUser();
+      const uid = userData?.user?.id;
+      if (uid) {
+        const { error } = await client
+          .from('profiles')
+          .update({
+            notification_settings: settings,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', uid);
 
-    const docRef = doc(db, 'users', user.uid, 'settings', 'preferences');
-    await setDoc(docRef, settings, { merge: true });
-    return { success: true, settings };
-  } else {
-    const active = getLocalActiveUser();
-    if (!active) throw new Error('Not authenticated');
-    const key = `nb_settings_${active.id}`;
-    setItemSync(key, JSON.stringify(settings));
-    return { success: true, settings };
+        if (error) {
+          throw new Error(`Failed to update notification settings in Supabase: ${error.message}`);
+        }
+        return { success: true, settings };
+      }
+    }
   }
+
+  return { success: true, settings };
 }
 
 // 5. Trigger Interactive personalized Suggestions test email
 export async function apiTriggerTestNutritionEmail() {
-  if (isFirebaseConfigured) {
-    const token = getToken();
-    const headers = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+  const token = getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/../sendTestSmartNutritionEmail`, {
-      method: 'POST',
-      headers
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to dispatch test suggestion email');
-    return data;
-  } else {
-    await sleep(400);
-    return {
-      success: true,
-      message: 'Personalized suggestions generated! (Mock Preview)',
-      previewUrl: 'https://ethereal.email/message/mock-preview-id-ethereal'
-    };
+  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/user/test-daily-email`, {
+    method: 'POST',
+    headers
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.success) {
+    throw new Error(data.message || 'Failed to dispatch test suggestion email');
   }
+  return data;
 }
 
 // 6. Get Suggestions Email History Logs
 export async function apiGetEmailHistory() {
-  if (isFirebaseConfigured && auth && auth.currentUser) {
+  if (isSupabaseConfigured) {
     try {
-      const querySnap = await getDocs(collection(db, 'users', auth.currentUser.uid, 'emailHistory'));
-      const history = querySnap.docs.map(docObj => docObj.data())
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-      return { success: true, history };
-    } catch (_) { }
+      const client = getSupabaseClient();
+      if (client && client.auth) {
+        const { data: userData } = await client.auth.getUser();
+        const uid = userData?.user?.id;
+        if (uid) {
+          const { data: logs, error } = await client
+            .from('email_delivery_logs')
+            .select('*')
+            .eq('user_id', uid)
+            .order('sent_at', { ascending: false });
+
+          if (!error && logs && logs.length > 0) {
+            const history = logs.map(l => ({
+              id: l.id,
+              timestamp: l.sent_at || l.created_at,
+              emailType: l.email_type,
+              subject: l.subject || (l.email_type === 'welcome' ? 'Welcome to FoodieBite!' : 'Daily Recommendation Digest'),
+              deliveryStatus: l.status === 'sent' || l.status === 'delivered' ? 'success' : 'failed'
+            }));
+            return { success: true, history };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('apiGetEmailHistory Supabase query note:', err.message);
+    }
   }
 
-  await sleep(50);
-  const active = getLocalActiveUser();
-  const key = `nb_email_history_${active?.id || 'default'}`;
-  const stored = getItemSync(key);
-  const mockHistory = stored ? JSON.parse(stored) : [
-    {
-      timestamp: new Date().toISOString(),
-      emailType: 'welcome',
-      subject: 'Welcome to FoodieBite 🎉',
-      deliveryStatus: 'success'
-    }
-  ];
-  return { success: true, history: mockHistory };
+  return { success: true, history: [] };
 }
 
 // 7. Complete Profile service
@@ -1619,38 +1689,22 @@ export async function apiCompleteProfile(profileData) {
 }
 
 // 8. Submit Feedback service
-export async function apiSubmitFeedback({ name, email, rating, message }) {
-  if (isFirebaseConfigured) {
-    const token = getToken();
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/feedback`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ name, email, rating, message })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Feedback submission failed');
-    return data;
-  } else {
-    await sleep(MOCK_DELAY);
-    const feedbackList = getJSONSync('nb_mock_feedback', []);
-    const active = getLocalActiveUser();
-    const uid = active ? active.id : 'mock-anonymous';
-    const newFeedback = {
-      id: `feedback-${Date.now()}`,
-      uid,
-      name,
-      email,
-      rating: Number(rating),
-      message,
-      createdAt: new Date().toISOString()
-    };
-    feedbackList.push(newFeedback);
-    setItemSync('nb_mock_feedback', JSON.stringify(feedbackList));
-    return { success: true };
+export async function apiSubmitFeedback({ name, email, rating, message, category = 'general' }) {
+  const token = getToken();
+  const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE}/feedback`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ name, email, rating, message, category })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.success) {
+    throw new Error(data.message || 'Feedback submission failed on server.');
   }
+  return data;
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -2500,95 +2554,53 @@ export async function apiAdminGetFeedback(params = {}) {
 
   const qStr = searchParams.toString();
   const url = `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/feedback${qStr ? `?${qStr}` : ''}`;
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token || 'mock_admin_token'}`,
-        'x-admin-key': 'foodiebite_ai_live_key_2026'
-      }
-    });
-    const data = await res.json();
-    if (res.ok && data.success) return data;
-  } catch (err) {
-    console.warn('apiAdminGetFeedback API failed, using fallback:', err.message);
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`,
+      'x-admin-key': 'foodiebite_ai_live_key_2026'
+    }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.success) {
+    throw new Error(data.message || 'Failed to load feedback from server');
   }
-  if (isFirebaseConfigured) {
-    try {
-      const snap = await getDocs(collection(db, 'feedback'));
-      const fbList = [];
-      snap.forEach(d => fbList.push({ id: d.id, ...d.data() }));
-      return { success: true, feedback: fbList, total: fbList.length };
-    } catch (_) { }
-  }
-  const feedbackList = getJSONSync('nb_mock_feedback', []);
-  return { success: true, feedback: feedbackList, total: feedbackList.length };
+  return data;
 }
 
 export async function apiAdminResolveFeedback(id, replyMessage, status = 'resolved') {
   const token = getToken();
-  try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/feedback/${id}/resolve`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'x-admin-key': 'foodiebite_ai_live_key_2026'
-      },
-      body: JSON.stringify({ replyMessage, status })
-    });
-    const data = await res.json();
-    if (res.ok && data.success) return data;
-  } catch (err) {
-    console.warn('apiAdminResolveFeedback API failed:', err.message);
+  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/feedback/${id}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`,
+      'x-admin-key': 'foodiebite_ai_live_key_2026'
+    },
+    body: JSON.stringify({ replyMessage, status })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.success) {
+    throw new Error(data.message || 'Failed to update feedback status');
   }
-  if (isFirebaseConfigured) {
-    try {
-      await updateDoc(doc(db, 'feedback', id), {
-        status,
-        replyMessage,
-        resolvedAt: new Date().toISOString()
-      });
-      return { success: true };
-    } catch (_) { }
-  }
-  const feedbackList = getJSONSync('nb_mock_feedback', []);
-  const item = feedbackList.find(f => f.id === id);
-  if (item) {
-    item.status = status;
-    item.replyMessage = replyMessage;
-    setItemSync('nb_mock_feedback', JSON.stringify(feedbackList));
-    return { success: true };
-  }
-  return { success: true };
+  return data;
 }
 
 export async function apiAdminDeleteFeedback(id) {
   const token = getToken();
-  try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/feedback/${id}`, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'x-admin-key': 'foodiebite_ai_live_key_2026'
-      }
-    });
-    const data = await res.json();
-    if (res.ok && data.success) return data;
-  } catch (err) {
-    console.warn('apiAdminDeleteFeedback API failed:', err.message);
+  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/feedback/${id}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token || ''}`,
+      'x-admin-key': 'foodiebite_ai_live_key_2026'
+    }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.success) {
+    throw new Error(data.message || 'Failed to delete feedback');
   }
-  if (isFirebaseConfigured) {
-    try {
-      await deleteDoc(doc(db, 'feedback', id));
-      return { success: true };
-    } catch (_) { }
-  }
-  let feedbackList = getJSONSync('nb_mock_feedback', []);
-  feedbackList = feedbackList.filter(f => f.id !== id);
-  setItemSync('nb_mock_feedback', JSON.stringify(feedbackList));
-  return { success: true };
+  return data;
 }
 
 
@@ -2699,31 +2711,30 @@ const MEDICAL_API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000
 
 // ── Upload medical report ────────────────────────────────────
 export async function apiUploadMedicalReport(file, notes = '', reportName = '') {
-  if (isFirebaseConfigured) {
-    // ── Always get a fresh Firebase ID token to avoid stale-token 401s ──
-    let token = null;
-    try {
-      const fbUser = auth.currentUser;
-      if (fbUser) {
-        token = await fbUser.getIdToken(false); // false = use cached if still valid
-      } else {
-        token = getToken();
-      }
-    } catch (tokenErr) {
-      console.warn('apiUploadMedicalReport: failed to get fresh token, using stored:', tokenErr.message);
-      token = getToken();
+  let token = null;
+  if (isSupabaseConfigured) {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data } = await client.auth.getSession();
+        if (data?.session?.access_token) {
+          token = data.session.access_token;
+        }
+      } catch (_) { }
     }
+  }
+  if (!token) token = getToken();
 
-    if (!token) {
-      const active = getLocalActiveUser();
-      token = active?.token || active?.id || 'mock_guest_token_dev_2026';
-    }
-
-    let uploadPayload = file;
-    if (file && !(file instanceof Blob) && !(file instanceof File)) {
-      if (file.file && (file.file instanceof Blob || file.file instanceof File)) {
-        uploadPayload = file.file;
-      } else if (file.uri) {
+  let uploadPayload = file;
+  const isNativeBlob = typeof Blob !== 'undefined' && file instanceof Blob;
+  const isNativeFile = typeof File !== 'undefined' && file instanceof File;
+  if (file && !isNativeBlob && !isNativeFile) {
+    const isSubFileBlob = typeof Blob !== 'undefined' && file.file instanceof Blob;
+    const isSubFileFile = typeof File !== 'undefined' && file.file instanceof File;
+    if (file.file && (isSubFileBlob || isSubFileFile)) {
+      uploadPayload = file.file;
+    } else if (file.uri) {
+      if (typeof File !== 'undefined') {
         try {
           const fetched = await fetch(file.uri);
           const blob = await fetched.blob();
@@ -2733,205 +2744,139 @@ export async function apiUploadMedicalReport(file, notes = '', reportName = '') 
         } catch (_) {
           uploadPayload = file;
         }
+      } else {
+        uploadPayload = {
+          uri: file.uri,
+          name: file.name || file.fileName || 'medical_report.pdf',
+          type: file.type || 'application/pdf'
+        };
       }
     }
+  }
 
-    const formData = new FormData();
-    formData.append('report', uploadPayload);
-    if (notes) formData.append('notes', notes);
-    if (reportName) formData.append('reportName', reportName);
+  const formData = new FormData();
+  formData.append('report', uploadPayload);
+  if (notes) formData.append('notes', notes);
+  if (reportName) formData.append('reportName', reportName);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
 
-    try {
-      const res = await fetch(`${MEDICAL_API_BASE}/medical/upload`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData,
-        signal: controller.signal
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Upload failed');
-      return data;
-    } catch (fetchErr) {
-      if (fetchErr.name === 'AbortError') {
-        throw new Error('Upload timed out after 30 seconds. Please try again.');
-      }
-      throw fetchErr;
-    } finally {
-      clearTimeout(timer);
+  try {
+    const res = await fetch(`${MEDICAL_API_BASE}/medical/upload`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: formData,
+      signal: controller.signal
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Upload failed');
+    return data;
+  } catch (fetchErr) {
+    if (fetchErr.name === 'AbortError') {
+      throw new Error('Upload timed out after 30 seconds. Please try again.');
     }
-  } else {
-    await sleep(MOCK_DELAY * 4);
-    const user = getLocalActiveUser();
-    if (!user) throw new Error('Not authenticated');
-
-    const report = {
-      id: `report-${Date.now()}`,
-      _id: `report-${Date.now()}`,
-      reportName: reportName || file.name,
-      filename: file.name,
-      originalName: file.name,
-      fileUrl: `https://example.com/mock/${file.name}`,
-      previewUrl: `https://example.com/mock/${file.name}`,
-      cloudinaryPublicId: `mock/${Date.now()}`,
-      mimeType: file.type,
-      fileSize: file.size,
-      uploadDate: new Date().toISOString(),
-      uploadedAt: new Date().toISOString(),
-      notes,
-      ocrConfidence: 95,
-      documentType: 'digital_pdf',
-      analysis: {
-        summary: notes
-          ? `Demo analysis for: ${notes.substring(0, 80)}. Upload to real server for full AI analysis.`
-          : 'Mock report saved. No analysis in demo mode.',
-        findings: notes.toLowerCase().includes('hemoglobin')
-          ? [{ biomarker: 'Hemoglobin', key: 'hemoglobin', value: 10.5, unit: 'g/dL', status: 'Low', referenceRange: '12.0 – 17.5 g/dL', category: 'nutrition' }]
-          : [],
-        wellnessConcerns: notes.toLowerCase().includes('hemoglobin')
-          ? [{ biomarker: 'Hemoglobin', status: 'Low', concern: 'Low Hemoglobin', tag: 'Possible Anemia / Iron Deficiency Risk', severity: 'moderate' }]
-          : [],
-        healthScores: {
-          categories: { bloodSugar: 100, heartHealth: 100, vitamins: 100, nutrition: notes.toLowerCase().includes('hemoglobin') ? 70 : 100 },
-          overall: notes.toLowerCase().includes('hemoglobin') ? 82 : 100,
-          overallLabel: 'Good'
-        },
-        foodProfile: {
-          foodsToPrefer: notes.toLowerCase().includes('hemoglobin') ? ['Spinach', 'Dates', 'Beetroot', 'Lentils'] : [],
-          foodsToLimit: notes.toLowerCase().includes('hemoglobin') ? ['Tea (with meals)', 'Coffee (with meals)'] : [],
-          recommendedNutrients: notes.toLowerCase().includes('hemoglobin') ? ['iron', 'vitaminC'] : []
-        },
-        biomarkers: notes.toLowerCase().includes('hemoglobin') ? { hemoglobin: 10.5 } : {},
-        analysisConfidence: notes ? 60 : 0,
-        analysisFailed: false,
-        patientInfo: {
-          name: "Mock Patient",
-          age: "35",
-          gender: "Male",
-          reportDate: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-        },
-        extractedTable: notes.toLowerCase().includes('hemoglobin')
-          ? [{ name: 'Hemoglobin', value: '10.5', unit: 'g/dL', referenceRange: '12.0 – 17.5', status: 'Low' }]
-          : [],
-        risks: notes.toLowerCase().includes('hemoglobin') ? ['Possible Anemia / Iron Deficiency Risk'] : [],
-        recommendedFoods: notes.toLowerCase().includes('hemoglobin') ? ['Spinach', 'Dates', 'Beetroot'] : [],
-        avoidFoods: notes.toLowerCase().includes('hemoglobin') ? ['Tea (with meals)'] : []
-      }
-    };
-
-    const users = getLocalUsers();
-    const u = users[user.email] || user;
-    u.medicalReports = [...(u.medicalReports || []), report];
-    users[user.email] = u;
-    saveLocalUsers(users);
-
-    return { success: true, message: 'Mock report uploaded (demo mode)', report };
+    throw fetchErr;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 // ── Get all medical reports ──────────────────────────────────
 export async function apiGetMedicalReports() {
-  if (isFirebaseConfigured) {
-    let token = null;
-    try {
-      const fbUser = auth?.currentUser;
-      if (fbUser) {
-        token = await fbUser.getIdToken(false);
-      }
-    } catch (_) { }
-    if (!token) token = getToken();
-    if (!token) {
-      const active = getLocalActiveUser();
-      token = active?.token || active?.id || 'mock_guest_token_dev_2026';
+  let token = null;
+  if (isSupabaseConfigured) {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data } = await client.auth.getSession();
+        if (data?.session?.access_token) {
+          token = data.session.access_token;
+        }
+      } catch (_) { }
     }
+  }
+  if (!token) token = getToken();
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
 
-    try {
-      const res = await fetch(`${MEDICAL_API_BASE}/medical/reports`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-        signal: controller.signal
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to fetch reports');
-      return data;
-    } catch (err) {
-      if (err.name === 'AbortError') {
-        console.warn('apiGetMedicalReports: request timed out');
-        return { success: true, count: 0, reports: [] };
-      }
-      throw err;
-    } finally {
-      clearTimeout(timer);
+  try {
+    const res = await fetch(`${MEDICAL_API_BASE}/medical/reports`, {
+      headers: {
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      signal: controller.signal
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Failed to fetch reports');
+    return data;
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      console.warn('apiGetMedicalReports: request timed out');
+      return { success: true, count: 0, reports: [] };
     }
-  } else {
-    await sleep(MOCK_DELAY);
-    const user = getLocalActiveUser();
-    if (!user) throw new Error('Not authenticated');
-    const users = getLocalUsers();
-    const u = users[user.email] || {};
-    const reports = (u.medicalReports || []).map(r => ({
-      id: r.id || r._id,
-      _id: r.id || r._id,
-      reportName: r.reportName || r.filename,
-      filename: r.filename,
-      uploadDate: r.uploadDate || r.uploadedAt,
-      fileUrl: r.fileUrl,
-      documentType: r.documentType || 'unknown',
-      ocrConfidence: r.ocrConfidence || 0,
-      notes: r.notes || '',
-      analysis: r.analysis || null
-    })).sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
-    return { success: true, count: reports.length, reports };
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 // ── Get single medical report ────────────────────────────────
 export async function apiGetMedicalReport(reportId) {
-  if (isFirebaseConfigured) {
-    const token = getToken();
-    const res = await fetch(`${MEDICAL_API_BASE}/medical/report/${reportId}`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to fetch report');
-    return data;
-  } else {
-    await sleep(MOCK_DELAY);
-    const user = getLocalActiveUser();
-    if (!user) throw new Error('Not authenticated');
-    const users = getLocalUsers();
-    const u = users[user.email] || {};
-    const report = (u.medicalReports || []).find(r => r.id === reportId || r._id === reportId);
-    if (!report) throw new Error('Report not found');
-    return { success: true, report };
+  let token = null;
+  if (isSupabaseConfigured) {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data } = await client.auth.getSession();
+        if (data?.session?.access_token) {
+          token = data.session.access_token;
+        }
+      } catch (_) { }
+    }
   }
+  if (!token) token = getToken();
+
+  const res = await fetch(`${MEDICAL_API_BASE}/medical/report/${reportId}`, {
+    headers: {
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    }
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || 'Failed to fetch report');
+  return data;
 }
 
 // ── Delete medical report ────────────────────────────────────
 export async function apiDeleteMedicalReport(reportId) {
-  if (isFirebaseConfigured) {
-    const token = getToken();
+  let token = null;
+  if (isSupabaseConfigured) {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data } = await client.auth.getSession();
+        if (data?.session?.access_token) {
+          token = data.session.access_token;
+        }
+      } catch (_) { }
+    }
+  }
+  if (!token) token = getToken();
+
+  try {
     const res = await fetch(`${MEDICAL_API_BASE}/medical/report/${reportId}`, {
       method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` }
+      headers: {
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      }
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.message || 'Failed to delete report');
     return data;
-  } else {
-    await sleep(MOCK_DELAY);
-    const user = getLocalActiveUser();
-    if (!user) throw new Error('Not authenticated');
-    const users = getLocalUsers();
-    const u = users[user.email] || {};
-    u.medicalReports = (u.medicalReports || []).filter(r => r.id !== reportId && r._id !== reportId);
-    users[user.email] = u;
-    saveLocalUsers(users);
-    return { success: true, message: 'Report deleted' };
+  } catch (err) {
+    return { success: false, message: err.message };
   }
 }
 

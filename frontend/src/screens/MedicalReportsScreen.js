@@ -20,6 +20,9 @@ import {
   Platform,
   Linking,
   useWindowDimensions,
+  Modal,
+  BackHandler,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -51,7 +54,8 @@ import {
   uploadAndPersistMedicalReport,
   subscribeToUserMedicalReports,
   deleteCloudMedicalReport,
-  validateMedicalPdf
+  validateMedicalPdf,
+  getSignedUrlForReport
 } from '../services/medicalReportsService';
 import { useApp } from '../context/AppContext';
 import { C } from '../components/UI';
@@ -113,8 +117,48 @@ export default function MedicalReportsScreen() {
   const [copiedRawText, setCopiedRawText] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
 
+  // In-App PDF Preview Modal State
+  const [previewModalVisible, setPreviewModalVisible] = useState(false);
+  const [previewReport, setPreviewReport] = useState(null);
+  const [pdfLoadError, setPdfLoadError] = useState(null);
+
   const fileInputRef = useRef(null);
   const detailsRef = useRef(null);
+
+  // Safe Back Navigation
+  const handleBackNavigation = () => {
+    if (previewModalVisible) {
+      setPreviewModalVisible(false);
+      return;
+    }
+    if (navigation && typeof navigation.canGoBack === 'function' && navigation.canGoBack()) {
+      navigation.goBack();
+    } else if (navigation && typeof navigation.navigate === 'function') {
+      navigation.navigate('Home');
+    }
+  };
+
+  // Hardware Back Handler on Android
+  useEffect(() => {
+    const onBackPress = () => {
+      if (previewModalVisible) {
+        setPreviewModalVisible(false);
+        return true;
+      }
+      if (navigation && typeof navigation.canGoBack === 'function' && navigation.canGoBack()) {
+        navigation.goBack();
+        return true;
+      }
+      if (navigation && typeof navigation.navigate === 'function') {
+        navigation.navigate('Home');
+        return true;
+      }
+      return false;
+    };
+
+    const backSub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => backSub.remove();
+  }, [previewModalVisible, navigation]);
 
   // ── 1. Real-time Cloud Synchronization ────────────────────────
   useEffect(() => {
@@ -274,11 +318,28 @@ export default function MedicalReportsScreen() {
     }
   };
 
-  // ── 4. Open Original PDF from Cloud Storage ───────────────────
-  const handleOpenPdf = (url) => {
-    if (!url) {
-      setErrorMsg('PDF file URL is not available.');
-      return;
+  // ── 4. In-App PDF & Document Preview ─────────────────────────
+  const handleOpenPdf = async (reportOrUrl) => {
+    setErrorMsg('');
+    let targetReport = null;
+    let url = '';
+
+    if (typeof reportOrUrl === 'string') {
+      url = reportOrUrl;
+      targetReport = reportsList.find(r => (r.fileUrl === url || r.downloadUrl === url)) || activeReport;
+    } else if (reportOrUrl && typeof reportOrUrl === 'object') {
+      targetReport = reportOrUrl;
+      url = targetReport.fileUrl || targetReport.downloadUrl || targetReport.previewUrl || '';
+    }
+
+    // Refresh signed URL if storagePath is present
+    if (targetReport?.storagePath) {
+      try {
+        const freshUrl = await getSignedUrlForReport(targetReport.storagePath, 3600);
+        if (freshUrl) {
+          url = freshUrl;
+        }
+      } catch (_) {}
     }
 
     let finalUrl = url;
@@ -290,26 +351,46 @@ export default function MedicalReportsScreen() {
       finalUrl = `${backendBase}${cleanPath}`;
     }
 
+    const reportObj = targetReport || {
+      reportName: 'Medical Report',
+      fileName: 'medical_report.pdf',
+      fileUrl: finalUrl,
+    };
+
+    setPreviewReport({ ...reportObj, fileUrl: finalUrl });
+    setPdfLoadError(null);
+    setPreviewModalVisible(true);
+  };
+
+  const handleOpenExternalPdf = (url) => {
+    if (!url) {
+      setErrorMsg('PDF file URL is not available.');
+      return;
+    }
+
     if (Platform.OS === 'web') {
-      window.open(finalUrl, '_blank', 'noopener,noreferrer');
+      if (typeof window !== 'undefined' && typeof window.open === 'function') {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
     } else {
-      Linking.openURL(finalUrl).catch(err => {
-        setErrorMsg('Unable to open PDF document: ' + err.message);
-      });
+      Linking.canOpenURL(url)
+        .then((supported) => {
+          if (supported) {
+            return Linking.openURL(url);
+          } else {
+            return Linking.openURL(url);
+          }
+        })
+        .catch((err) => {
+          setErrorMsg('Unable to launch system PDF viewer: ' + err.message);
+        });
     }
   };
 
-  // ── 5. Delete Report ─────────────────────────────────────────
-  const handleDeleteReport = async (report) => {
+  // ── 5. Delete Report with native confirmation ────────────────
+  const executeDeleteReport = async (report) => {
     if (!report) return;
     const reportId = report.id || report._id;
-
-    if (Platform.OS === 'web') {
-      const confirmed = window.confirm(
-        `Are you sure you want to delete "${report.reportName || report.fileName || 'this report'}"?\nThis will remove the document and its extracted data from your cloud account.`
-      );
-      if (!confirmed) return;
-    }
 
     try {
       await deleteCloudMedicalReport(reportId, report.storagePath, userId);
@@ -318,10 +399,36 @@ export default function MedicalReportsScreen() {
         const remaining = reportsList.filter(r => (r.id || r._id) !== reportId);
         setActiveReport(remaining.length > 0 ? remaining[0] : null);
       }
+      if (previewReport && (previewReport.id === reportId || previewReport._id === reportId)) {
+        setPreviewModalVisible(false);
+      }
       setSuccessMsg('Report deleted successfully.');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) {
       setErrorMsg('Failed to delete report: ' + err.message);
+    }
+  };
+
+  const handleDeleteReport = (report) => {
+    if (!report) return;
+    const reportName = report.reportName || report.fileName || 'this report';
+    const message = `Are you sure you want to delete "${reportName}"? This will remove the document and its extracted data from your cloud account.`;
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        if (!window.confirm(message)) return;
+      }
+      executeDeleteReport(report);
+    } else {
+      Alert.alert(
+        'Delete Medical Report',
+        message,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: () => executeDeleteReport(report) },
+        ],
+        { cancelable: true }
+      );
     }
   };
 
@@ -349,7 +456,7 @@ export default function MedicalReportsScreen() {
   return (
     <AppLayout>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+        <TouchableOpacity onPress={handleBackNavigation} style={styles.backBtn} accessibilityLabel="Go back">
           <ArrowLeft size={18} color="#fff" />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
@@ -394,25 +501,19 @@ export default function MedicalReportsScreen() {
           </View>
 
           {/* Dropzone Container */}
-          <div
-            className="medical-dropzone"
-            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
-            onDragLeave={() => setIsDragOver(false)}
-            onDrop={handleDrop}
-            onClick={!selectedFile && !uploading ? handleSelectFile : undefined}
-            style={{
-              border: isDragOver ? `2px dashed ${C.orange}` : '2px dashed rgba(255,255,255,0.15)',
-              borderRadius: 14,
-              padding: '24px 16px',
-              backgroundColor: isDragOver ? 'rgba(255,107,53,0.06)' : '#14171f',
-              cursor: selectedFile || uploading ? 'default' : 'pointer',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginTop: 16,
-              transition: 'all 0.2s ease',
-            }}
+          <TouchableOpacity
+            activeOpacity={selectedFile || uploading ? 1 : 0.8}
+            onPress={!selectedFile && !uploading ? handleSelectFile : undefined}
+            style={[
+              styles.dropzone,
+              isDragOver && styles.dropzoneActive,
+              (selectedFile || uploading) && styles.dropzoneFilled,
+            ]}
+            {...(Platform.OS === 'web' ? {
+              onDragOver: (e) => { e.preventDefault(); setIsDragOver(true); },
+              onDragLeave: () => setIsDragOver(false),
+              onDrop: handleDrop,
+            } : {})}
           >
             {!selectedFile ? (
               <>
@@ -458,7 +559,7 @@ export default function MedicalReportsScreen() {
                 )}
               </View>
             )}
-          </div>
+          </TouchableOpacity>
 
           {/* Action Button & Loading Progress */}
           {selectedFile && !uploading && (
@@ -611,7 +712,7 @@ export default function MedicalReportsScreen() {
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        onPress={() => handleOpenPdf(r.fileUrl || r.downloadUrl)}
+                        onPress={() => handleOpenPdf(r)}
                         style={[styles.actionBtn, styles.actionBtnOutline]}
                         activeOpacity={0.8}
                       >
@@ -632,7 +733,7 @@ export default function MedicalReportsScreen() {
             ACTIVE REPORT DETAILS VIEW
             ───────────────────────────────────────────────────────────── */}
         {activeReport && (
-          <div ref={detailsRef}>
+          <View ref={detailsRef} style={{ width: '100%' }}>
             <View style={styles.detailsContainer}>
               {/* Report Header Bar */}
               <View style={styles.detailsBanner}>
@@ -644,7 +745,7 @@ export default function MedicalReportsScreen() {
                 </View>
 
                 <TouchableOpacity
-                  onPress={() => handleOpenPdf(activeReport.fileUrl || activeReport.downloadUrl)}
+                  onPress={() => handleOpenPdf(activeReport)}
                   style={styles.openPdfBannerBtn}
                   activeOpacity={0.8}
                 >
@@ -784,66 +885,67 @@ export default function MedicalReportsScreen() {
                     </Text>
                   </View>
                 ) : (
-                  <div style={{ overflowX: 'auto', width: '100%', marginTop: 12 }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
-                      <thead>
-                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: '#8f97a6' }}>
-                          <th style={{ padding: '10px 8px', fontWeight: 600 }}>Test Name</th>
-                          <th style={{ padding: '10px 8px', fontWeight: 600, textAlign: 'right' }}>Result</th>
-                          <th style={{ padding: '10px 8px', fontWeight: 600 }}>Unit</th>
-                          <th style={{ padding: '10px 8px', fontWeight: 600 }}>Reference Range</th>
-                          <th style={{ padding: '10px 8px', fontWeight: 600, textAlign: 'center' }}>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {testResults.map((t, idx) => {
-                          const statusLower = (t.status || '').toLowerCase();
-                          const isHigh = statusLower === 'high' || statusLower === 'critical';
-                          const isLow  = statusLower === 'low';
-                          const isNormal = statusLower === 'normal';
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 12 }}>
+                    <View style={styles.tableBox}>
+                      <View style={styles.tableHeaderRow}>
+                        <Text style={[styles.tableHeaderCell, { width: 140 }]}>Test Name</Text>
+                        <Text style={[styles.tableHeaderCell, { width: 90, textAlign: 'right' }]}>Result</Text>
+                        <Text style={[styles.tableHeaderCell, { width: 70 }]}>Unit</Text>
+                        <Text style={[styles.tableHeaderCell, { width: 120 }]}>Reference Range</Text>
+                        <Text style={[styles.tableHeaderCell, { width: 100, textAlign: 'center' }]}>Status</Text>
+                      </View>
+                      {testResults.map((t, idx) => {
+                        const statusLower = (t.status || '').toLowerCase();
+                        const isHigh = statusLower === 'high' || statusLower === 'critical';
+                        const isLow  = statusLower === 'low';
+                        const isNormal = statusLower === 'normal';
 
-                          return (
-                            <tr
-                              key={idx}
-                              style={{
-                                borderBottom: '1px solid rgba(255,255,255,0.05)',
-                                backgroundColor: idx % 2 === 1 ? 'rgba(255,255,255,0.015)' : 'transparent'
-                              }}
-                            >
-                              <td style={{ padding: '12px 8px', fontWeight: 600, color: '#f8fafc' }}>
-                                {t.testName || t.test || t.name || 'Parameter'}
-                              </td>
-                              <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: isHigh ? D.red : isLow ? D.yellow : '#fff' }}>
-                                {t.result || t.value || '—'}
-                              </td>
-                              <td style={{ padding: '12px 8px', color: '#8f97a6' }}>
-                                {t.unit && t.unit !== 'Not detected' ? t.unit : '—'}
-                              </td>
-                              <td style={{ padding: '12px 8px', color: '#8f97a6' }}>
-                                {t.referenceRange && t.referenceRange !== 'Not detected' ? t.referenceRange : '—'}
-                              </td>
-                              <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                                <span
-                                  style={{
-                                    display: 'inline-block',
-                                    padding: '3px 8px',
-                                    borderRadius: 6,
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    backgroundColor: isHigh ? D.redBg : isLow ? D.yellowBg : isNormal ? D.greenBg : 'rgba(255,255,255,0.06)',
-                                    color: isHigh ? D.red : isLow ? D.yellow : isNormal ? D.green : '#94a3b8',
-                                    border: `1px solid ${isHigh ? D.redBr : isLow ? D.yellowBr : isNormal ? D.greenBr : 'rgba(255,255,255,0.1)'}`
-                                  }}
+                        return (
+                          <View
+                            key={idx}
+                            style={[
+                              styles.tableBodyRow,
+                              idx % 2 === 1 && styles.tableBodyRowAlt
+                            ]}
+                          >
+                            <Text style={[styles.tableBodyCellName, { width: 140 }]} numberOfLines={2}>
+                              {t.testName || t.test || t.name || 'Parameter'}
+                            </Text>
+                            <Text style={[styles.tableBodyCellResult, { width: 90, color: isHigh ? D.red : isLow ? D.yellow : '#fff' }]}>
+                              {t.result || t.value || '—'}
+                            </Text>
+                            <Text style={[styles.tableBodyCellMuted, { width: 70 }]}>
+                              {t.unit && t.unit !== 'Not detected' ? t.unit : '—'}
+                            </Text>
+                            <Text style={[styles.tableBodyCellMuted, { width: 120 }]}>
+                              {t.referenceRange && t.referenceRange !== 'Not detected' ? t.referenceRange : '—'}
+                            </Text>
+                            <View style={[styles.tableStatusCellWrap, { width: 100 }]}>
+                              <View
+                                style={[
+                                  styles.tableStatusBadge,
+                                  isHigh && styles.tableStatusBadgeHigh,
+                                  isLow && styles.tableStatusBadgeLow,
+                                  isNormal && styles.tableStatusBadgeNormal
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.tableStatusBadgeText,
+                                    isHigh && { color: D.red },
+                                    isLow && { color: D.yellow },
+                                    isNormal && { color: D.green }
+                                  ]}
                                 >
                                   {t.status || 'Not detected'}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
                 )}
               </View>
 
@@ -883,20 +985,14 @@ export default function MedicalReportsScreen() {
                       </TouchableOpacity>
                     </View>
 
-                    <div
-                      className="ocr-raw-text"
-                      style={{
-                        backgroundColor: '#0c0e12',
-                        padding: 14,
-                        borderRadius: 10,
-                        border: '1px solid rgba(255,255,255,0.06)',
-                        color: '#cbd5e1',
-                        maxHeight: 280,
-                        overflowY: 'auto'
-                      }}
+                    <ScrollView
+                      nestedScrollEnabled={true}
+                      style={styles.ocrRawTextBox}
                     >
-                      {rawOcrText || 'No text recognized.'}
-                    </div>
+                      <Text style={styles.ocrRawTextContent} selectable={true}>
+                        {rawOcrText || 'No text recognized.'}
+                      </Text>
+                    </ScrollView>
                   </View>
                 )}
               </View>
@@ -912,9 +1008,207 @@ export default function MedicalReportsScreen() {
                 </View>
               </View>
             </View>
-          </div>
+          </View>
         )}
       </ScrollView>
+
+      {/* ─────────────────────────────────────────────────────────────
+          IN-APP PDF & CLINICAL DOCUMENT PREVIEW MODAL
+          ───────────────────────────────────────────────────────────── */}
+      <Modal
+        visible={previewModalVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setPreviewModalVisible(false)}
+      >
+        <View style={styles.modalRoot}>
+          {/* Top Bar */}
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              onPress={() => setPreviewModalVisible(false)}
+              style={styles.modalCloseBtn}
+              activeOpacity={0.8}
+              accessibilityLabel="Close PDF preview"
+            >
+              <ArrowLeft size={18} color="#fff" />
+            </TouchableOpacity>
+
+            <View style={{ flex: 1, marginHorizontal: 8 }}>
+              <Text style={styles.modalDocTitle} numberOfLines={1}>
+                {previewReport?.reportName || previewReport?.fileName || 'Medical Report Preview'}
+              </Text>
+              <Text style={styles.modalDocSub} numberOfLines={1}>
+                {previewReport?.uploadedAt ? `Uploaded ${formatDate(previewReport.uploadedAt)} · ` : ''}
+                In-App Document Viewer
+              </Text>
+            </View>
+
+            {previewReport?.fileUrl ? (
+              <TouchableOpacity
+                onPress={() => handleOpenExternalPdf(previewReport.fileUrl)}
+                style={styles.modalExternalBtn}
+                activeOpacity={0.8}
+                accessibilityLabel="Open in device viewer"
+              >
+                <ExternalLink size={14} color="#38bdf8" style={{ marginRight: 5 }} />
+                <Text style={styles.modalExternalBtnText}>Device Viewer</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {/* Modal Body */}
+          <ScrollView
+            showsVerticalScrollIndicator={true}
+            contentContainerStyle={styles.modalScrollBody}
+          >
+            {/* Document Info Card */}
+            <View style={styles.modalDocCard}>
+              <View style={styles.modalDocCardTop}>
+                <View style={styles.modalPdfIcon}>
+                  <FileText size={24} color={C.orange} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.modalDocName} numberOfLines={1}>
+                    {previewReport?.fileName || previewReport?.reportName || 'medical_report.pdf'}
+                  </Text>
+                  <Text style={styles.modalDocMeta}>
+                    {previewReport?.storageProvider === 'supabase' ? 'Cloud Verified (Supabase)' : 'Local Encrypted Storage'}
+                  </Text>
+                </View>
+                <View style={styles.modalBadgeVerified}>
+                  <CheckCircle2 size={12} color={D.green} style={{ marginRight: 4 }} />
+                  <Text style={styles.modalBadgeVerifiedText}>Ready</Text>
+                </View>
+              </View>
+
+              {/* Quick Actions in Card */}
+              {previewReport?.fileUrl ? (
+                <View style={styles.modalActionRow}>
+                  <TouchableOpacity
+                    onPress={() => handleOpenExternalPdf(previewReport.fileUrl)}
+                    style={styles.modalPrimaryAction}
+                    activeOpacity={0.85}
+                  >
+                    <ExternalLink size={14} color="#fff" style={{ marginRight: 6 }} />
+                    <Text style={styles.modalPrimaryActionText}>Open Original PDF File</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.modalWarningNotice}>
+                  <AlertCircle size={15} color={D.yellow} style={{ marginRight: 6, flexShrink: 0 }} />
+                  <Text style={styles.modalWarningText}>
+                    Direct file stream is offline. All parsed biomarkers, test values, and OCR text are fully preserved below.
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* If on Web and we have a valid URL, embed iframe */}
+            {Platform.OS === 'web' && previewReport?.fileUrl ? (
+              <View style={styles.webIframeContainer}>
+                <iframe
+                  src={previewReport.fileUrl}
+                  title="Medical Report Document Preview"
+                  style={{
+                    width: '100%',
+                    height: 520,
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 12,
+                    backgroundColor: '#171a20',
+                  }}
+                />
+              </View>
+            ) : null}
+
+            {/* Extracted Clinical Lab Parameters in Modal */}
+            {previewReport?.extractedData?.testResults?.length > 0 && (
+              <View style={styles.modalSectionCard}>
+                <View style={styles.modalSectionHeader}>
+                  <Activity size={16} color={C.orange} style={{ marginRight: 6 }} />
+                  <Text style={styles.modalSectionTitle}>Extracted Lab Biomarkers</Text>
+                  <Text style={styles.tableCountBadge}>
+                    {previewReport.extractedData.testResults.length} parameters
+                  </Text>
+                </View>
+
+                <View style={styles.modalParamGrid}>
+                  {previewReport.extractedData.testResults.map((t, i) => {
+                    const st = (t.status || '').toLowerCase();
+                    const isH = st === 'high' || st === 'critical';
+                    const isL = st === 'low';
+                    const isN = st === 'normal';
+
+                    return (
+                      <View key={i} style={styles.modalParamItem}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.modalParamName} numberOfLines={1}>
+                            {t.testName || t.name || t.test || 'Test Parameter'}
+                          </Text>
+                          <Text style={styles.modalParamRef}>
+                            Ref: {t.referenceRange && t.referenceRange !== 'Not detected' ? t.referenceRange : 'Standard'} {t.unit || ''}
+                          </Text>
+                        </View>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <Text style={[styles.modalParamValue, isH && { color: D.red }, isL && { color: D.yellow }]}>
+                            {t.result || t.value || '—'} {t.unit && t.unit !== 'Not detected' ? t.unit : ''}
+                          </Text>
+                          <View
+                            style={[
+                              styles.tableStatusBadge,
+                              isH && styles.tableStatusBadgeHigh,
+                              isL && styles.tableStatusBadgeLow,
+                              isN && styles.tableStatusBadgeNormal,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.tableStatusBadgeText,
+                                isH && { color: D.red },
+                                isL && { color: D.yellow },
+                                isN && { color: D.green },
+                              ]}
+                            >
+                              {t.status || 'Normal'}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
+            {/* Recognized Clinical OCR Transcript in Modal */}
+            <View style={styles.modalSectionCard}>
+              <View style={styles.modalSectionHeader}>
+                <FileText size={16} color={C.orange} style={{ marginRight: 6 }} />
+                <Text style={styles.modalSectionTitle}>Document OCR Text Content</Text>
+              </View>
+              <ScrollView
+                nestedScrollEnabled={true}
+                style={styles.modalOcrScroll}
+              >
+                <Text style={styles.modalOcrText} selectable={true}>
+                  {previewReport?.rawOcrText ||
+                    (previewReport?.extractedData?.patientInformation?.name
+                      ? `Patient: ${previewReport.extractedData.patientInformation.name}\nReport Date: ${previewReport.reportDate || 'N/A'}\nAll clinical parameters indexed.`
+                      : 'Clinical text indexing completed. No additional unformatted text.')}
+                </Text>
+              </ScrollView>
+            </View>
+
+            {/* Bottom Done Button */}
+            <TouchableOpacity
+              onPress={() => setPreviewModalVisible(false)}
+              style={styles.modalDismissBtn}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.modalDismissBtnText}>Done Viewing Report</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </Modal>
     </AppLayout>
   );
 }
@@ -1006,6 +1300,26 @@ const styles = StyleSheet.create({
     color: '#888',
     marginTop: 2,
     lineHeight: 18,
+  },
+  dropzone: {
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 14,
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    backgroundColor: '#14171f',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 16,
+  },
+  dropzoneActive: {
+    borderColor: C.orange,
+    backgroundColor: 'rgba(255,107,53,0.06)',
+  },
+  dropzoneFilled: {
+    borderStyle: 'solid',
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   dropzonePrompt: {
     fontSize: 14,
@@ -1508,5 +1822,297 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#cbd5e1',
     lineHeight: 16,
+  },
+
+  // Native Table Styles
+  tableBox: {
+    minWidth: 520,
+    width: '100%',
+  },
+  tableHeaderRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+  },
+  tableHeaderCell: {
+    color: '#8f97a6',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  tableBodyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+  },
+  tableBodyRowAlt: {
+    backgroundColor: 'rgba(255,255,255,0.015)',
+  },
+  tableBodyCellName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#f8fafc',
+  },
+  tableBodyCellResult: {
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  tableBodyCellMuted: {
+    fontSize: 12,
+    color: '#8f97a6',
+  },
+  tableStatusCellWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tableStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  tableStatusBadgeHigh: {
+    backgroundColor: D.redBg,
+    borderColor: D.redBr,
+  },
+  tableStatusBadgeLow: {
+    backgroundColor: D.yellowBg,
+    borderColor: D.yellowBr,
+  },
+  tableStatusBadgeNormal: {
+    backgroundColor: D.greenBg,
+    borderColor: D.greenBr,
+  },
+  tableStatusBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+
+  // Raw OCR Box
+  ocrRawTextBox: {
+    backgroundColor: '#0c0e12',
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    maxHeight: 280,
+  },
+  ocrRawTextContent: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+
+  // In-App PDF Preview Modal Styles
+  modalRoot: {
+    flex: 1,
+    backgroundColor: '#111318',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#171a20',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  modalCloseBtn: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#20242e',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  modalDocTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  modalDocSub: {
+    fontSize: 11,
+    color: '#8f97a6',
+    marginTop: 2,
+  },
+  modalExternalBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(56,189,248,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(56,189,248,0.3)',
+  },
+  modalExternalBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#38bdf8',
+  },
+  modalScrollBody: {
+    padding: 16,
+    paddingBottom: 40,
+    maxWidth: 960,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  modalDocCard: {
+    backgroundColor: '#171a20',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    padding: 16,
+    marginBottom: 16,
+  },
+  modalDocCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  modalPdfIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,107,53,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalDocName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  modalDocMeta: {
+    fontSize: 12,
+    color: '#8f97a6',
+    marginTop: 2,
+  },
+  modalBadgeVerified: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: D.greenBg,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  modalBadgeVerifiedText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: D.green,
+  },
+  modalActionRow: {
+    marginTop: 14,
+  },
+  modalPrimaryAction: {
+    backgroundColor: C.orange,
+    paddingVertical: 10,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalPrimaryActionText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modalWarningNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: D.yellowBg,
+    borderWidth: 1,
+    borderColor: D.yellowBr,
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 12,
+  },
+  modalWarningText: {
+    fontSize: 12,
+    color: D.yellow,
+    flex: 1,
+    lineHeight: 16,
+  },
+  webIframeContainer: {
+    marginBottom: 16,
+  },
+  modalSectionCard: {
+    backgroundColor: '#171a20',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    padding: 16,
+    marginBottom: 16,
+  },
+  modalSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
+    flex: 1,
+  },
+  modalParamGrid: {
+    gap: 10,
+  },
+  modalParamItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.04)',
+  },
+  modalParamName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#f8fafc',
+  },
+  modalParamRef: {
+    fontSize: 11,
+    color: '#8f97a6',
+    marginTop: 2,
+  },
+  modalParamValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 3,
+  },
+  modalOcrScroll: {
+    backgroundColor: '#0c0e12',
+    padding: 12,
+    borderRadius: 8,
+    maxHeight: 240,
+  },
+  modalOcrText: {
+    fontSize: 11,
+    color: '#cbd5e1',
+    lineHeight: 17,
+  },
+  modalDismissBtn: {
+    backgroundColor: '#20242e',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  modalDismissBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

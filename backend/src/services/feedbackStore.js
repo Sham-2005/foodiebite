@@ -1,134 +1,117 @@
 // ─────────────────────────────────────────────────────────────
 //  backend/src/services/feedbackStore.js
-//  FoodieBite — Feedback Management Store (Memory & Firestore Sync)
+//  FoodieBite — Feedback Management Store (Strict Supabase PostgreSQL)
 // ─────────────────────────────────────────────────────────────
 
 'use strict';
 
-const { getFirestoreDb } = require('../config/firebase');
+const { getSupabaseAdmin, getSupabaseClient } = require('../config/supabase');
 
-// In-memory cache pre-seeded with realistic feedback records
-const inMemoryFeedback = [
-  {
-    id: 'feedback-1740001000000',
-    uid: 'usr_sham_admin',
-    name: 'Sham',
-    email: 'sham111205s@gmail.com',
-    category: 'recommendations',
-    rating: 5,
-    message: 'The daily vegetarian recommendation emails are fantastic! The nutrient breakdown for breakfast oats was spot on.',
-    status: 'reviewed',
-    reviewedBy: 'admin@foodiebite.com',
-    reviewedAt: '2026-10-25T10:00:00.000Z',
-    internalNotes: 'User validated breakfast oats recommendation accuracy. Positive feedback on daily emails.',
-    createdAt: '2026-10-25T09:15:00.000Z',
-    updatedAt: '2026-10-25T10:00:00.000Z'
-  },
-  {
-    id: 'feedback-1740002000000',
-    uid: 'usr_sarah_99',
-    name: 'Sarah Jenkins',
-    email: 'sarah.j@example.com',
-    category: 'dietary_safety',
-    rating: 4,
-    message: 'Could you add more low-sodium lentil soup options in the winter recommendations? Otherwise loving the app!',
-    status: 'pending',
-    reviewedBy: null,
-    reviewedAt: null,
-    internalNotes: null,
-    createdAt: '2026-10-26T06:30:00.000Z',
-    updatedAt: '2026-10-26T06:30:00.000Z'
-  },
-  {
-    id: 'feedback-1740003000000',
-    uid: 'usr_rahul_k',
-    name: 'Rahul Kumar',
-    email: 'rahul.k@example.com',
-    category: 'app_experience',
-    rating: 5,
-    message: 'The nut allergy filtering works seamlessly. I feel safe trying the suggested recipes.',
-    status: 'resolved',
-    reviewedBy: 'admin@foodiebite.com',
-    reviewedAt: '2026-10-26T08:00:00.000Z',
-    internalNotes: 'Nut allergy filter verified. User satisfied.',
-    replyMessage: 'Thank you Rahul! Allergen safety is our highest priority at FoodieBite.',
-    createdAt: '2026-10-26T07:15:00.000Z',
-    updatedAt: '2026-10-26T08:00:00.000Z'
-  }
-];
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-async function safeFirestore(promise, timeoutMs = 500) {
-  let timer;
-  try {
-    const timeoutPromise = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error('Firestore timeout')), timeoutMs);
-    });
-    return await Promise.race([promise, timeoutPromise]);
-  } catch (err) {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+function getClient() {
+  return getSupabaseAdmin() || getSupabaseClient();
 }
 
+/**
+ * Persist new user feedback directly to Supabase public.user_feedback
+ */
 async function addFeedback(feedbackDoc) {
-  inMemoryFeedback.unshift(feedbackDoc);
-  const db = getFirestoreDb();
-  if (db) {
-    try {
-      await safeFirestore(db.collection('feedback').doc(feedbackDoc.id).set(feedbackDoc), 500);
-    } catch (_) {}
+  const client = getClient();
+  if (!client) {
+    throw new Error('Supabase client unavailable');
   }
-  return feedbackDoc;
+
+  const rawUserId = feedbackDoc.userId || feedbackDoc.uid || feedbackDoc.user_id;
+  const validUserId = (rawUserId && UUID_REGEX.test(rawUserId)) ? rawUserId : null;
+
+  const validCategory = ['general', 'bug', 'recommendation', 'feature_request', 'dietary_safety'].includes(feedbackDoc.category)
+    ? feedbackDoc.category
+    : 'general';
+
+  const validRating = Math.max(1, Math.min(5, parseInt(feedbackDoc.rating, 10) || 5));
+
+  const insertPayload = {
+    user_id: validUserId,
+    user_email: feedbackDoc.email || feedbackDoc.user_email || 'anonymous@foodiebite.com',
+    user_name: feedbackDoc.name || feedbackDoc.user_name || 'Anonymous User',
+    rating: validRating,
+    category: validCategory,
+    message: feedbackDoc.message || '',
+    status: feedbackDoc.status || 'pending',
+    admin_notes: feedbackDoc.admin_notes || feedbackDoc.internalNotes || null,
+    created_at: feedbackDoc.createdAt || new Date().toISOString()
+  };
+
+  const { data, error } = await client
+    .from('user_feedback')
+    .insert(insertPayload)
+    .select('*')
+    .single();
+
+  if (error) {
+    console.error('❌ [feedbackStore.addFeedback] Supabase error:', error.message);
+    throw new Error(`Failed to save feedback to Supabase: ${error.message}`);
+  }
+
+  return {
+    ...data,
+    id: data.id,
+    name: data.user_name,
+    email: data.user_email,
+    userId: data.user_id,
+    createdAt: data.created_at
+  };
 }
 
+/**
+ * Retrieve all feedback from Supabase with filtering
+ */
 async function getAllFeedback(filters = {}) {
-  const list = [...inMemoryFeedback];
-  const db = getFirestoreDb();
+  const client = getClient();
+  if (!client) return [];
 
-  if (db) {
-    try {
-      const snap = await safeFirestore(db.collection('feedback').orderBy('createdAt', 'desc').get(), 600);
-      if (snap) {
-        snap.forEach(doc => {
-          const data = { id: doc.id, ...doc.data() };
-          const idx = list.findIndex(f => f.id === data.id);
-          if (idx !== -1) {
-            list[idx] = { ...list[idx], ...data };
-          } else {
-            list.push(data);
-          }
-        });
-      }
-    } catch (_) {}
-  }
+  let query = client.from('user_feedback').select('*').order('created_at', { ascending: false });
 
-  let result = [...list];
-
-  // 1. Filter by category
   if (filters.category && filters.category !== 'all') {
-    const cat = filters.category.toLowerCase().trim();
-    result = result.filter(f => (f.category || 'general').toLowerCase() === cat);
+    query = query.eq('category', filters.category.toLowerCase().trim());
   }
 
-  // 2. Filter by status
   if (filters.status && filters.status !== 'all') {
-    const st = filters.status.toLowerCase().trim();
-    result = result.filter(f => (f.status || 'pending').toLowerCase() === st);
+    query = query.eq('status', filters.status.toLowerCase().trim());
   }
 
-  // 3. Filter by rating
   if (filters.rating && filters.rating !== 'all') {
     const r = parseInt(filters.rating, 10);
-    if (!isNaN(r)) {
-      result = result.filter(f => Number(f.rating) === r);
-    }
+    if (!isNaN(r)) query = query.eq('rating', r);
   }
 
-  // 4. Search query
+  const { data, error } = await query;
+  if (error) {
+    console.error('❌ [feedbackStore.getAllFeedback] Supabase error:', error.message);
+    return [];
+  }
+
+  let list = (data || []).map(d => ({
+    id: d.id,
+    uid: d.user_id,
+    userId: d.user_id,
+    name: d.user_name,
+    email: d.user_email,
+    rating: d.rating,
+    category: d.category,
+    message: d.message,
+    status: d.status,
+    internalNotes: d.admin_notes,
+    admin_notes: d.admin_notes,
+    createdAt: d.created_at,
+    updatedAt: d.resolved_at || d.created_at,
+    resolvedAt: d.resolved_at
+  }));
+
   if (filters.q && filters.q.trim()) {
     const term = filters.q.trim().toLowerCase();
-    result = result.filter(f =>
+    list = list.filter(f =>
       (f.message && f.message.toLowerCase().includes(term)) ||
       (f.name && f.name.toLowerCase().includes(term)) ||
       (f.email && f.email.toLowerCase().includes(term)) ||
@@ -136,62 +119,99 @@ async function getAllFeedback(filters = {}) {
     );
   }
 
-  // 5. Sort by createdAt desc
-  result.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-
-  return result;
+  return list;
 }
 
+/**
+ * Retrieve feedback by ID from Supabase
+ */
 async function getFeedbackById(id) {
-  const found = inMemoryFeedback.find(f => f.id === id);
-  const db = getFirestoreDb();
-  if (db) {
-    try {
-      const snap = await safeFirestore(db.collection('feedback').doc(id).get(), 400);
-      if (snap && snap.exists) {
-        return { id: snap.id, ...snap.data() };
-      }
-    } catch (_) {}
-  }
-  return found || null;
-}
+  const client = getClient();
+  if (!client) return null;
 
-async function updateFeedback(id, updates) {
-  const now = new Date().toISOString();
-  const allowed = {
-    ...updates,
-    updatedAt: now
+  const { data, error } = await client
+    .from('user_feedback')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  return {
+    id: data.id,
+    uid: data.user_id,
+    userId: data.user_id,
+    name: data.user_name,
+    email: data.user_email,
+    rating: data.rating,
+    category: data.category,
+    message: data.message,
+    status: data.status,
+    internalNotes: data.admin_notes,
+    admin_notes: data.admin_notes,
+    createdAt: data.created_at,
+    updatedAt: data.resolved_at || data.created_at,
+    resolvedAt: data.resolved_at
   };
-
-  const idx = inMemoryFeedback.findIndex(f => f.id === id);
-  if (idx !== -1) {
-    inMemoryFeedback[idx] = {
-      ...inMemoryFeedback[idx],
-      ...allowed
-    };
-  }
-
-  const db = getFirestoreDb();
-  if (db) {
-    try {
-      await safeFirestore(db.collection('feedback').doc(id).set(allowed, { merge: true }), 500);
-    } catch (_) {}
-  }
-
-  return inMemoryFeedback[idx] || allowed;
 }
 
+/**
+ * Update feedback ticket in Supabase
+ */
+async function updateFeedback(id, updates) {
+  const client = getClient();
+  if (!client) throw new Error('Supabase client unavailable');
+
+  const dbUpdates = {};
+  if (updates.status !== undefined) dbUpdates.status = updates.status;
+  if (updates.internalNotes !== undefined) dbUpdates.admin_notes = updates.internalNotes;
+  if (updates.admin_notes !== undefined) dbUpdates.admin_notes = updates.admin_notes;
+  if (updates.status === 'resolved' || updates.status === 'closed') {
+    dbUpdates.resolved_at = new Date().toISOString();
+  }
+
+  const { data, error } = await client
+    .from('user_feedback')
+    .update(dbUpdates)
+    .eq('id', id)
+    .select('*')
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to update feedback in Supabase: ${error.message}`);
+  }
+
+  return data ? {
+    id: data.id,
+    name: data.user_name,
+    email: data.user_email,
+    rating: data.rating,
+    category: data.category,
+    message: data.message,
+    status: data.status,
+    internalNotes: data.admin_notes,
+    admin_notes: data.admin_notes,
+    createdAt: data.created_at,
+    resolvedAt: data.resolved_at
+  } : null;
+}
+
+/**
+ * Delete feedback ticket from Supabase
+ */
 async function deleteFeedback(id) {
-  const idx = inMemoryFeedback.findIndex(f => f.id === id);
-  if (idx !== -1) {
-    inMemoryFeedback.splice(idx, 1);
+  const client = getClient();
+  if (!client) return true;
+
+  const { error } = await client
+    .from('user_feedback')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    throw new Error(`Failed to delete feedback in Supabase: ${error.message}`);
   }
-  const db = getFirestoreDb();
-  if (db) {
-    try {
-      await safeFirestore(db.collection('feedback').doc(id).delete(), 400);
-    } catch (_) {}
-  }
+
   return true;
 }
 

@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, BackHandler, Platform } from 'react-native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { Mail, Lock, Eye, EyeOff, X, Shield } from 'lucide-react-native';
 import { BtnOrange, TextInput, C } from '../components/UI';
 import { useApp } from '../context/AppContext';
-import { apiLogin, apiLoginWithGoogle, apiForgotPassword, apiResendVerificationEmail } from '../services/api';
+import { apiLogin, apiLoginWithGoogle, apiForgotPassword, apiResendVerificationEmail, apiSendWelcomeEmail } from '../services/api';
 
 export default function SignInScreen() {
   const navigation = useNavigation();
@@ -32,6 +32,32 @@ export default function SignInScreen() {
 
   const AUTHORIZED_ADMIN_EMAIL = 'sham111205s@gmail.com';
 
+  // Prevent hardware back button from reopening protected routes when on SignInScreen
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        if (resetModal) {
+          setResetModal(false);
+          return true;
+        }
+        if (Platform.OS === 'android') {
+          BackHandler.exitApp();
+          return true;
+        }
+        return false;
+      };
+
+      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      return () => {
+        if (subscription && typeof subscription.remove === 'function') {
+          subscription.remove();
+        } else if (BackHandler.removeEventListener) {
+          BackHandler.removeEventListener('hardwareBackPress', onBackPress);
+        }
+      };
+    }, [resetModal])
+  );
+
   // Sync prefilled email if passed via navigation params
   useEffect(() => {
     if (prefillEmail && !email) {
@@ -54,13 +80,13 @@ export default function SignInScreen() {
 
   function routeAfterAuth(userData, rawEmail) {
     const cleanEmail = (userData?.email || rawEmail || '').trim().toLowerCase();
-    const isAdmin = cleanEmail === AUTHORIZED_ADMIN_EMAIL;
+    const isAdmin = userData?.role === 'admin' || (userData?.role !== 'user' && cleanEmail === AUTHORIZED_ADMIN_EMAIL);
     const isProfileComplete = Boolean(
       userData?.profileCompleted === true ||
       (userData?.age && userData?.gender)
     );
 
-    if (typeof window !== 'undefined' && window.location && window.location.pathname !== undefined) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location && window.location.pathname !== undefined) {
       if (isAdmin) {
         window.location.href = '/admin';
       } else {
@@ -83,8 +109,9 @@ export default function SignInScreen() {
       const data = await apiLoginWithGoogle();
       if (data?.user) {
         setUser(data.user);
+        apiSendWelcomeEmail(data.user).catch(() => {});
         routeAfterAuth(data.user);
-      } else if (data?.url && typeof window !== 'undefined' && window.location) {
+      } else if (data?.url && Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
         window.location.href = data.url;
       }
     } catch (err) {
@@ -101,6 +128,7 @@ export default function SignInScreen() {
     try {
       const data = await apiLogin({ email: cleanEmail, password });
       setUser(data.user);
+      apiSendWelcomeEmail(data.user).catch(() => {});
       routeAfterAuth(data.user, cleanEmail);
     } catch (err) {
       if (err.isUnverified || /not been verified|verify your email|email not confirmed/i.test(err.message || '')) {

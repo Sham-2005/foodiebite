@@ -199,9 +199,13 @@ export default function FoodDetailScreen() {
   const grade = resolveFoodGrade(food);
   const gColor = gradeColor(grade);
 
-  const userAllergies = (preferences?.allergies || []).map(a => String(a).toLowerCase().trim());
-  const matchingAllergens = (food?.allergens || []).filter(a => {
-    const clean = a.replace('en:', '').replace(/-/g, ' ').toLowerCase();
+  const userAllergies = (preferences?.allergies || [])
+    .map(a => String(a || '').toLowerCase().trim())
+    .filter(Boolean);
+  const foodAllergensList = Array.isArray(food?.allergens) ? food.allergens : [];
+  const matchingAllergens = foodAllergensList.filter(a => {
+    if (!a) return false;
+    const clean = String(a).replace('en:', '').replace(/-/g, ' ').toLowerCase();
     return userAllergies.some(ua => clean.includes(ua) || ua.includes(clean));
   });
 
@@ -335,25 +339,25 @@ export default function FoodDetailScreen() {
             </View>
           ) : null}
 
-          {food.labels?.length > 0 ? (
+          {Array.isArray(food.labels) && food.labels.length > 0 ? (
             <View style={{ marginBottom: 20 }}>
               <Text style={styles.subSectionTitle}>Labels & Certifications</Text>
               <View style={styles.tagsContainer}>
-                {food.labels.slice(0, 8).map(l => (
-                  <TagPill key={l} label={l.replace('en:', '').replace(/-/g, ' ')} />
+                {food.labels.filter(Boolean).slice(0, 8).map((l, idx) => (
+                  <TagPill key={`${String(l)}-${idx}`} label={String(l).replace('en:', '').replace(/-/g, ' ')} />
                 ))}
               </View>
             </View>
           ) : null}
 
-          {food.allergens?.length > 0 ? (
+          {Array.isArray(food.allergens) && food.allergens.length > 0 ? (
             <View style={styles.allergenCard}>
               <Text style={styles.allergenTitle}>Contains Allergens</Text>
               <View style={styles.tagsContainer}>
-                {food.allergens.map(a => (
-                  <View key={a} style={styles.allergenBadge}>
+                {food.allergens.filter(Boolean).map((a, idx) => (
+                  <View key={`${String(a)}-${idx}`} style={styles.allergenBadge}>
                     <Text style={styles.allergenText}>
-                      {a.replace('en:', '').replace(/-/g, ' ')}
+                      {String(a).replace('en:', '').replace(/-/g, ' ')}
                     </Text>
                   </View>
                 ))}

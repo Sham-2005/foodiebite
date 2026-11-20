@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, TextInput as RNTextInput } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, TextInput as RNTextInput, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { User, Mail, Lock, Eye, EyeOff, ChevronDown, Check, X } from 'lucide-react-native';
 import { BtnOrange, TextInput, C } from '../components/UI';
@@ -33,13 +33,13 @@ export default function SignUpScreen() {
 
   function routeAfterAuth(userData) {
     const cleanEmail = (userData?.email || '').trim().toLowerCase();
-    const isAdmin = cleanEmail === 'sham111205s@gmail.com';
+    const isAdmin = userData?.role === 'admin' || (userData?.role !== 'user' && cleanEmail === 'sham111205s@gmail.com');
     const isProfileComplete = Boolean(
       userData?.profileCompleted === true ||
       (userData?.age && userData?.gender)
     );
 
-    if (typeof window !== 'undefined' && window.location && window.location.pathname !== undefined) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location && window.location.pathname !== undefined) {
       if (isAdmin) {
         window.location.href = '/admin';
       } else {
@@ -63,7 +63,7 @@ export default function SignUpScreen() {
       if (data?.user) {
         setUser(data.user);
         routeAfterAuth(data.user);
-      } else if (data?.url && typeof window !== 'undefined' && window.location) {
+      } else if (data?.url && Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
         window.location.href = data.url;
       }
     } catch (err) {
@@ -145,6 +145,15 @@ export default function SignUpScreen() {
         gender: trimmedGender
       });
 
+      // Always trigger welcome email for the newly registered account
+      const newUserPayload = {
+        id: data.user?.id,
+        email: trimmedEmail,
+        name: trimmedName,
+        dietType,
+      };
+      apiSendWelcomeEmail(newUserPayload).catch(e => console.warn('Welcome email dispatch notice:', e.message));
+
       if (data?.requiresVerification) {
         navigation.navigate('SignIn', {
           verificationNotice: `Verification email sent to ${trimmedEmail}! Please check your inbox (and spam folder) to verify your account before signing in.`,
@@ -155,7 +164,6 @@ export default function SignUpScreen() {
 
       setUser({ ...data.user, preferences: { ...(data.user?.preferences || {}), ...preferences } });
       setPreferences(preferences);
-      apiSendWelcomeEmail().catch(e => console.warn('Welcome email dispatch skipped:', e.message));
     } catch (err) {
       setError(err.message || 'Registration failed. Please try again.');
     } finally {

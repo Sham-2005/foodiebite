@@ -340,44 +340,47 @@ export function BackHeader({ title, right }) {
       <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
         <Text style={styles.backButtonText}>←</Text>
       </TouchableOpacity>
-      {title && <Text style={styles.backHeaderTitle}>{title}</Text>}
+      {title && <Text style={styles.backHeaderTitle} numberOfLines={1}>{title}</Text>}
       <View>{right || <View style={{ width: 34 }} />}</View>
     </View>
   );
 }
 
 export function HealthScoreBadge({ score = 5.0, grade = 'C', style }) {
+  const numScore = typeof score === 'number' && !isNaN(score) ? score : (parseFloat(score) || 5.0);
+  const cleanGrade = (grade && typeof grade === 'string') ? grade.toUpperCase() : 'C';
   let color = '#F59E0B'; // Amber Orange
-  if (score >= 9.0) color = '#10B981'; // Emerald Green
-  else if (score >= 7.5) color = '#34D399'; // Mint Green
-  else if (score >= 6.0) color = '#059669'; // Dark Green
-  else if (score >= 3.0) color = '#EF4444'; // Coral Red
+  if (numScore >= 9.0) color = '#10B981'; // Emerald Green
+  else if (numScore >= 7.5) color = '#34D399'; // Mint Green
+  else if (numScore >= 6.0) color = '#059669'; // Dark Green
+  else if (numScore >= 3.0) color = '#EF4444'; // Coral Red
   else color = '#B91C1C'; // Deep Crimson
 
   return (
     <View style={[styles.healthScoreBadge, style]}>
       <View style={[styles.healthScoreDot, { backgroundColor: color }]} />
-      <Text style={styles.healthScoreText}>{score.toFixed(1)}</Text>
+      <Text style={styles.healthScoreText}>{numScore.toFixed(1)}</Text>
       <View style={[styles.healthScoreLabelContainer, { backgroundColor: `${color}1A` }]}>
-        <Text style={[styles.healthScoreLabel, { color }]}>Grade {grade}</Text>
+        <Text style={[styles.healthScoreLabel, { color }]}>Grade {cleanGrade}</Text>
       </View>
     </View>
   );
 }
 
 export function HealthScoreCard({ food, style }) {
-  const protein = food.protein || 0;
-  const fiber = food.fiber || 0;
-  const sugar = food.sugar || 0;
-  const sodium = food.sodium || 0;
-  const fat = food.fat || 0;
-  const satFat = food.saturatedFat || Math.round(fat * 0.3 * 10) / 10;
+  if (!food) return null;
+  const protein = Number(food.protein) || 0;
+  const fiber = Number(food.fiber) || 0;
+  const sugar = Number(food.sugar) || 0;
+  const sodium = Number(food.sodium) || 0;
+  const fat = Number(food.fat) || 0;
+  const satFat = Number(food.saturatedFat) || Math.round(fat * 0.3 * 10) / 10;
   
-  const labels = food.labels || [];
+  const labels = Array.isArray(food.labels) ? food.labels : [];
   let nova = 1;
-  if (labels.some(l => l.includes('nova-4') || l.includes('ultra-processed'))) nova = 4;
-  else if (labels.some(l => l.includes('nova-3'))) nova = 3;
-  else if (labels.some(l => l.includes('nova-2'))) nova = 2;
+  if (labels.some(l => typeof l === 'string' && (l.includes('nova-4') || l.includes('ultra-processed')))) nova = 4;
+  else if (labels.some(l => typeof l === 'string' && l.includes('nova-3'))) nova = 3;
+  else if (labels.some(l => typeof l === 'string' && l.includes('nova-2'))) nova = 2;
 
   const proteinBonus = Math.min(2.0, protein * 0.2);
   const fiberBonus = Math.min(2.0, fiber * 0.4);

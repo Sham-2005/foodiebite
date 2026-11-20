@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────
 
 const fetch = require('node-fetch');
-const admin = require('firebase-admin');
+const { admin } = require('../config/firebase');
 const dns = require('dns');
 
 // ── Connection helper to check if internet is available ──

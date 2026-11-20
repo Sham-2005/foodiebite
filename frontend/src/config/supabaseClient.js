@@ -5,7 +5,7 @@
 //  Configures platform-appropriate persistent storage:
 //    - Web: window.localStorage
 //    - Android: @react-native-async-storage/async-storage
-//  Note: Firebase remains the active primary database & auth provider.
+//  Note: Supabase is the sole primary database & auth provider across Web and Android.
 // ─────────────────────────────────────────────────────────────
 
 import { createClient } from '@supabase/supabase-js';
@@ -79,7 +79,14 @@ try {
 
 // Helper to resolve the canonical redirect URL across Web and Mobile
 export function getAuthRedirectUrl(path = '') {
-  if (typeof window !== 'undefined' && window.location) {
+  let isWeb = false;
+  try {
+    const { Platform } = require('react-native');
+    isWeb = Platform.OS === 'web';
+  } catch (_) {
+    isWeb = typeof window !== 'undefined' && typeof window.document !== 'undefined';
+  }
+  if (isWeb && typeof window !== 'undefined' && window.location) {
     const origin = window.location.origin;
     return path ? `${origin}/${path.replace(/^\//, '')}` : origin;
   }

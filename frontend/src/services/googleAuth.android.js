@@ -9,7 +9,7 @@
 import { signInWithGoogleIdToken, registerNativeSignOutHandler } from './supabaseAuthService.js';
 import { getSupabaseClient, getSupabaseInitError } from '../config/supabaseClient.js';
 import { saveSession, savePreferences } from './localStorageService.js';
-import { setItemSync } from './storage.js';
+import { setItem, removeItem, setItemSync, removeItemSync } from './storage.js';
 
 let GoogleSigninModule = null;
 let statusCodes = {
@@ -75,7 +75,20 @@ export async function loginWithGoogle(options = {}) {
     // 2. Verify Google Play Services is available on device
     await GoogleSigninModule.hasPlayServices({ showPlayServicesUpdateDialog: true });
 
+    // Always clear local Google Play Services session before launching the sign-in intent.
+    // This forces Google Play Services to open the account selection dialog / account picker
+    // so the user can choose which Google account to use, rather than auto-selecting the previous one.
+    try {
+      if (typeof GoogleSigninModule.signOut === 'function') {
+        console.log('[GoogleAuthAndroid] Pre-clearing local Google session to force account picker');
+        await GoogleSigninModule.signOut();
+      }
+    } catch (_) {
+      // Ignored if no cached account existed
+    }
+
     // 3. Initiate native Google account picker & sign-in
+    console.log('[GoogleAuthAndroid] Launching Google Sign-In account picker');
     const signInResult = await GoogleSigninModule.signIn();
     let idToken = signInResult?.idToken || (signInResult?.data && signInResult.data.idToken);
     if (!idToken && typeof GoogleSigninModule.getTokens === 'function') {
@@ -103,10 +116,13 @@ export async function loginWithGoogle(options = {}) {
       throw new Error('Supabase authentication returned invalid user data.');
     }
 
-    // 5. Enforce single-admin exclusivity and derive user roles securely
+    // 5. Enforce role verification: check Supabase profile role first, with admin email verification
     const cleanEmail = (authRes.user.email || '').trim().toLowerCase();
-    const isAdmin = cleanEmail === AUTHORIZED_ADMIN_EMAIL;
-    const role = authRes.profile?.role === 'admin' && isAdmin ? 'admin' : (isAdmin ? 'admin' : 'user');
+    const profileRole = authRes.profile?.role;
+    const isAdmin = profileRole === 'admin' || (profileRole !== 'user' && cleanEmail === AUTHORIZED_ADMIN_EMAIL);
+    const role = isAdmin ? 'admin' : 'user';
+
+    console.log(`[GoogleAuthAndroid] Authenticated user email: ${cleanEmail}, role: ${role}`);
 
     // 6. Check profile completion status
     const isProfileComplete = Boolean(
@@ -144,17 +160,25 @@ export async function loginWithGoogle(options = {}) {
     };
 
     // 8. Persist authentication token and session state to AsyncStorage via storage service
-    setItemSync('nb_token', authRes.session.access_token);
-    setItemSync('nb_mock_active', JSON.stringify(userData));
-    saveSession({ ...userData, token: authRes.session.access_token });
-    if (userData.preferences) {
-      savePreferences(userData.preferences);
-    }
+    try {
+      await setItem('nb_token', authRes.session.access_token);
+      await setItem('nb_active_session', JSON.stringify({ ...userData, token: authRes.session.access_token }));
+      await setItem('nb_active_user', JSON.stringify(userData));
+      await setItem('nb_mock_active', JSON.stringify(userData));
+      saveSession({ ...userData, token: authRes.session.access_token });
+      if (userData.preferences) {
+        savePreferences(userData.preferences);
+      }
 
-    // 9. If designated administrator, persist admin session tokens
-    if (isAdmin) {
-      const sessionPayload = { success: true, token: authRes.session.access_token, user: userData };
-      setItemSync('foodiebite_admin_session', JSON.stringify(sessionPayload));
+      // 9. If designated administrator, persist admin session tokens; otherwise clear
+      if (isAdmin) {
+        const sessionPayload = { success: true, token: authRes.session.access_token, user: userData };
+        await setItem('foodiebite_admin_session', JSON.stringify(sessionPayload));
+      } else {
+        await removeItem('foodiebite_admin_session');
+      }
+    } catch (storageErr) {
+      console.warn('[GoogleAuthAndroid] Non-fatal storage persistence notice:', storageErr?.message || storageErr);
     }
 
     return {
@@ -181,13 +205,17 @@ export async function loginWithGoogle(options = {}) {
 
 /**
  * Signs out from Google Sign-In natively on Android so account picker is cleared.
+ * NOTE: Intentionally calls signOut() and NOT revokeAccess() to preserve authorization.
  */
 export async function signOutFromGoogle() {
   try {
     if (GoogleSigninModule && typeof GoogleSigninModule.signOut === 'function') {
       await GoogleSigninModule.signOut();
+      console.log('[GoogleAuthAndroid] Google Play Services local session signed out successfully');
     }
-  } catch (_) {}
+  } catch (err) {
+    console.warn('[GoogleAuthAndroid] Google Sign-Out warning:', err?.message || err);
+  }
 }
 
 registerNativeSignOutHandler(signOutFromGoogle);

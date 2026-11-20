@@ -260,6 +260,9 @@ export default function AIScreen() {
 
       if (res && res.nearbyIntent && typeof setNearbyTrigger === 'function') {
         setNearbyTrigger(res.nearbyIntent);
+        if (navigation && typeof navigation.navigate === 'function') {
+          navigation.navigate('Home');
+        }
       }
     } catch (err) {
       console.warn('AI query error:', err);
@@ -303,7 +306,7 @@ export default function AIScreen() {
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <View style={styles.avatarWrap}>
-            <Image 
+            <Image
               source={require('../assets/logo.jpg')}
               style={styles.headerLogo}
             />
@@ -335,7 +338,7 @@ export default function AIScreen() {
 
       {/* Threads Bar */}
       {threads.length > 1 && (
-        <ScrollView 
+        <ScrollView
           horizontal 
           showsHorizontalScrollIndicator={false}
           style={styles.threadScroll}

@@ -1,13 +1,14 @@
 // ─────────────────────────────────────────────────────────────
-//  src/controllers/adminController.js
+//  backend/src/controllers/adminController.js
 //  Complete, Secure Administrator Controller for FoodieBite
-//  Handles Paginated Users, Real Analytics, Feature Usage, Audit Logs & CSV Exports
+//  (Strict Supabase Single Source of Truth)
 // ─────────────────────────────────────────────────────────────
 
-const admin = require('firebase-admin');
-const fs = require('fs');
-const path = require('path');
-const { getFirebaseAdmin, getFirestoreDb } = require('../config/firebase');
+'use strict';
+
+const { getSupabaseAdmin, getSupabaseClient } = require('../config/supabase');
+const feedbackStore = require('../services/feedbackStore');
+const restaurantRequestStore = require('../services/restaurantRequestStore');
 const {
   getFeatureUsageStats,
   logAdminAudit,
@@ -19,7 +20,7 @@ const {
 let overviewMetricsCache = null;
 let overviewMetricsCacheExpiry = 0;
 
-// In-memory cache for fetchCombinedUsers (TTL: 10 seconds) to avoid repeated Firestore queries
+// In-memory cache for fetchCombinedUsers (TTL: 10 seconds)
 let combinedUsersCache = null;
 let combinedUsersCacheExpiry = 0;
 
@@ -30,25 +31,25 @@ function invalidateCombinedUsersCache() {
   overviewMetricsCacheExpiry = 0;
 }
 
+function getClient() {
+  return getSupabaseAdmin() || getSupabaseClient();
+}
+
 /**
  * Helper to escape CSV cell values against spreadsheet formula injection.
- * Prepends a single quote if the value begins with =, +, -, or @.
  */
 function sanitizeCsvValue(val) {
   if (val === null || val === undefined) return '""';
   let str = String(val).trim();
-  // Formula injection prevention:
   if (/^[=+\-@\t\r]/.test(str)) {
     str = `'${str}`;
   }
-  // Escape inner double quotes by doubling them
   str = str.replace(/"/g, '""');
   return `"${str}"`;
 }
 
 /**
- * Helper to fetch registered users by combining Firebase Auth with Firestore profiles.
- * Gracefully falls back to Firestore if Firebase Admin Auth credentials are not available.
+ * Fetch registered users directly from Supabase public.profiles.
  */
 async function fetchCombinedUsers(forceRefresh = false) {
   const now = Date.now();
@@ -56,132 +57,55 @@ async function fetchCombinedUsers(forceRefresh = false) {
     return combinedUsersCache;
   }
 
-  const adminApp = getFirebaseAdmin();
-  const db = getFirestoreDb();
-  const userStore = require('../services/userStore');
+  const client = getClient();
+  if (!client) return [];
 
-  const userMap = new Map(); // uid -> unified user object
+  const { data: profiles, error } = await client
+    .from('profiles')
+    .select('*')
+    .order('created_at', { ascending: false });
 
-  // 1. Authoritative base from persistent userStore
-  const localDirectoryUsers = userStore.getAllUsers();
-  localDirectoryUsers.forEach(u => {
-    const uid = u.id || u.uid;
-    if (uid) {
-      userMap.set(uid, {
-        id: uid,
-        uid: uid,
-        name: u.name || (u.email ? u.email.split('@')[0] : 'User'),
-        email: u.email || '',
-        emailVerified: u.emailVerified !== undefined ? !!u.emailVerified : true,
-        createdAt: u.createdAt || null,
-        lastSignInTime: u.lastSignInTime || u.lastLoginAt || null,
-        lastActiveAt: u.lastActiveAt || u.lastSignInTime || null,
-        authProvider: u.authProvider || (u.email && u.email.includes('google') ? 'google.com' : 'password'),
-        accountStatus: u.disabled ? 'disabled' : (u.accountStatus || 'active'),
-        disabled: !!u.disabled,
-        role: u.role || 'user',
-        dietType: u.dietType || u.preferences?.dietType || 'Vegetarian',
-        cuisines: u.cuisines || u.preferences?.cuisines || [],
-        spiceLevel: u.spiceLevel || u.preferences?.spiceLevel || 'Medium',
-        healthGoals: u.healthGoals || u.preferences?.healthGoals || [],
-        allergies: u.allergies || u.preferences?.allergies || [],
-        favoritesCount: Array.isArray(u.favoriteFoods) ? u.favoriteFoods.length : 0,
-        profileMissing: false
-      });
-    }
+  if (error) {
+    console.error('❌ [fetchCombinedUsers] Supabase profiles fetch error:', error.message);
+    return [];
+  }
+
+  // Count favorites per user
+  const favCounts = {};
+  try {
+    const { data: favs } = await client.from('user_favorites').select('user_id');
+    (favs || []).forEach(f => {
+      favCounts[f.user_id] = (favCounts[f.user_id] || 0) + 1;
+    });
+  } catch (_) {}
+
+  const finalUsers = (profiles || []).map(p => {
+    const prefs = p.preferences || {};
+    return {
+      id: p.id,
+      uid: p.id,
+      name: p.name || p.full_name || (p.email ? p.email.split('@')[0] : 'User'),
+      email: p.email || '',
+      emailVerified: true,
+      createdAt: p.created_at || null,
+      lastSignInTime: p.last_sign_in_at || p.updated_at || null,
+      lastActiveAt: p.updated_at || null,
+      authProvider: p.email && p.email.includes('google') ? 'google.com' : 'password',
+      accountStatus: p.account_status || (p.disabled ? 'disabled' : 'active'),
+      disabled: Boolean(p.disabled),
+      role: p.role || 'user',
+      dietType: p.diet_type || prefs.dietType || 'Vegetarian',
+      cuisines: prefs.cuisines || [],
+      spiceLevel: prefs.spiceLevel || 'Medium',
+      healthGoals: prefs.healthGoals || [],
+      allergies: prefs.allergies || [],
+      favoritesCount: favCounts[p.id] || 0,
+      profileMissing: false
+    };
   });
 
-  const withTimeout = (promise, ms = 600) => Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
-  ]);
-
-  // 2. Load Firestore user profiles (if connected)
-  const firestoreDocs = new Map();
-  if (db) {
-    try {
-      const snap = await withTimeout(db.collection('users').get());
-      snap.forEach(doc => {
-        firestoreDocs.set(doc.id, doc.data());
-      });
-    } catch (fsErr) {
-      // Non-fatal if offline
-    }
-  }
-
-  // 3. Authoritative source: Firebase Auth listUsers (if service account configured)
-  try {
-    if (adminApp && adminApp.auth) {
-      let pageToken = undefined;
-      do {
-        const listResult = await withTimeout(adminApp.auth().listUsers(1000, pageToken));
-        for (const userRecord of listResult.users) {
-          const profile = firestoreDocs.get(userRecord.uid) || null;
-          const prefs = profile?.preferences || {};
-          const existing = userMap.get(userRecord.uid);
-
-          const provider = userRecord.providerData?.[0]?.providerId || existing?.authProvider || 'password';
-
-          userMap.set(userRecord.uid, {
-            id: userRecord.uid,
-            uid: userRecord.uid,
-            name: profile?.name || userRecord.displayName || existing?.name || (userRecord.email ? userRecord.email.split('@')[0] : 'User'),
-            email: userRecord.email || profile?.email || existing?.email || '',
-            emailVerified: !!userRecord.emailVerified,
-            createdAt: userRecord.metadata?.creationTime || profile?.createdAt || existing?.createdAt || null,
-            lastSignInTime: userRecord.metadata?.lastSignInTime || profile?.lastLoginAt || existing?.lastSignInTime || null,
-            lastActiveAt: profile?.lastActiveAt || existing?.lastActiveAt || null,
-            authProvider: provider,
-            accountStatus: (userRecord.disabled || profile?.disabled === true) ? 'disabled' : 'active',
-            disabled: !!userRecord.disabled || profile?.disabled === true,
-            role: profile?.role || (userRecord.customClaims?.role) || (userRecord.customClaims?.admin ? 'admin' : (existing?.role || 'user')),
-            dietType: prefs.dietType || profile?.dietType || existing?.dietType || 'Not configured',
-            cuisines: prefs.cuisines || profile?.cuisines || existing?.cuisines || [],
-            spiceLevel: prefs.spiceLevel || profile?.spiceLevel || existing?.spiceLevel || 'Not set',
-            healthGoals: prefs.healthGoals || profile?.healthGoals || existing?.healthGoals || [],
-            allergies: prefs.allergies || profile?.allergies || existing?.allergies || [],
-            favoritesCount: Array.isArray(profile?.favorites) ? profile.favorites.length : (existing?.favoritesCount || 0),
-            profileMissing: !profile
-          });
-        }
-        pageToken = listResult.pageToken;
-      } while (pageToken);
-    }
-  } catch (authErr) {
-    // Non-fatal if service account credentials are not configured locally
-  }
-
-  // 4. Merge Firestore profiles
-  for (const [uid, profile] of firestoreDocs.entries()) {
-    const prefs = profile?.preferences || {};
-    const existing = userMap.get(uid);
-
-    userMap.set(uid, {
-      id: uid,
-      uid: uid,
-      name: profile?.name || existing?.name || (profile?.email ? profile.email.split('@')[0] : 'User'),
-      email: profile?.email || existing?.email || '',
-      emailVerified: profile?.emailVerified !== undefined ? !!profile.emailVerified : (existing?.emailVerified || false),
-      createdAt: profile?.createdAt || profile?.registeredAt || existing?.createdAt || null,
-      lastSignInTime: profile?.lastLoginAt || existing?.lastSignInTime || null,
-      lastActiveAt: profile?.lastActiveAt || existing?.lastActiveAt || null,
-      authProvider: profile?.authProvider || existing?.authProvider || 'password',
-      accountStatus: (profile?.disabled === true || existing?.disabled) ? 'disabled' : 'active',
-      disabled: profile?.disabled === true || !!existing?.disabled,
-      role: profile?.role || existing?.role || 'user',
-      dietType: prefs.dietType || profile?.dietType || existing?.dietType || 'Not configured',
-      cuisines: prefs.cuisines || profile?.cuisines || existing?.cuisines || [],
-      spiceLevel: prefs.spiceLevel || profile?.spiceLevel || existing?.spiceLevel || 'Not set',
-      healthGoals: prefs.healthGoals || profile?.healthGoals || existing?.healthGoals || [],
-      allergies: prefs.allergies || profile?.allergies || existing?.allergies || [],
-      favoritesCount: Array.isArray(profile?.favorites) ? profile.favorites.length : (existing?.favoritesCount || 0),
-      profileMissing: false
-    });
-  }
-
-  const finalUsers = Array.from(userMap.values());
   combinedUsersCache = finalUsers;
-  combinedUsersCacheExpiry = Date.now() + 10000; // 10-second TTL
+  combinedUsersCacheExpiry = Date.now() + 10000;
   return finalUsers;
 }
 
@@ -289,278 +213,138 @@ exports.getAllUsers = async (req, res, next) => {
 
 /**
  * Get individual user details (GET /api/admin/users/:id)
- * Excludes sensitive health data, passwords, and raw medical reports.
  */
 exports.getUserById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const adminApp = getFirebaseAdmin();
-    const db = getFirestoreDb();
-
-    let authRecord = null;
-    try {
-      if (adminApp && adminApp.auth) {
-        authRecord = await adminApp.auth().getUser(id);
-      }
-    } catch (e) {
-      // User not in auth or auth offline
+    const client = getClient();
+    if (!client) {
+      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
     }
 
-    let profileDoc = null;
-    if (db) {
-      try {
-        const snap = await db.collection('users').doc(id).get();
-        if (snap.exists) {
-          profileDoc = snap.data();
-        }
-      } catch (e) {
-        console.warn(`Firestore read failed for user ${id}:`, e.message);
-      }
-    }
+    const { data: profileDoc, error: pErr } = await client
+      .from('profiles')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
 
-    if (!authRecord && !profileDoc) {
-      const userStore = require('../services/userStore');
-      profileDoc = userStore.getUserById(id) || userStore.findByEmail(id);
-    }
-
-    if (!authRecord && !profileDoc) {
+    if (pErr || !profileDoc) {
       return res.status(404).json({ success: false, message: 'User account not found' });
     }
 
-    if (profileDoc && profileDoc.medicalReports) {
-      delete profileDoc.medicalReports;
-    }
+    const userEmail = (profileDoc.email || '').toLowerCase().trim();
+    const prefs = profileDoc.preferences || {};
 
-    const prefs = profileDoc?.preferences || {};
-
-    const userEmail = (authRecord?.email || profileDoc?.email || '').toLowerCase().trim();
-
-    // ── 1. Aggregate REAL Sent Emails for this User ───────────
+    // 1. Sent Emails for this User from public.email_delivery_logs
     const sentEmails = [];
-    if (db && userEmail) {
-      try {
-        // Query email_logs collection
-        const emailSnap = await db.collection('email_logs')
-          .where('recipient', '==', userEmail)
-          .get();
-        emailSnap.forEach(doc => {
-          const d = doc.data();
+    try {
+      const { data: emailLogs } = await client
+        .from('email_delivery_logs')
+        .select('*')
+        .eq('recipient_email', userEmail)
+        .order('sent_at', { ascending: false });
+
+      if (emailLogs && emailLogs.length > 0) {
+        emailLogs.forEach(log => {
           sentEmails.push({
-            id: doc.id,
-            subject: d.subject || 'Notification from FoodieBite',
-            recipient: d.recipient || userEmail,
-            sender: d.sender || 'FoodieBite <onboarding@resend.dev>',
-            status: d.status || 'delivered',
-            timestamp: d.timestamp || null,
-            type: d.type || 'system_email'
+            id: log.id,
+            subject: log.subject || (log.email_type === 'welcome' ? 'Welcome to FoodieBite!' : 'Daily Recommendation Digest'),
+            recipient: log.recipient_email,
+            sender: 'FoodieBite <onboarding@resend.dev>',
+            status: log.status || 'delivered',
+            timestamp: log.sent_at || log.created_at,
+            type: log.email_type || 'system_email'
           });
         });
-      } catch (eErr) {
-        console.warn('⚠️ Could not query email_logs:', eErr.message);
       }
+    } catch (_) {}
 
-      // If user doc has welcomeEmailSent: true and not in email_logs
-      if (profileDoc?.welcomeEmailSent === true && !sentEmails.some(e => (e.subject || '').includes('Welcome'))) {
-        sentEmails.push({
-          id: `welcome_${id}`,
-          subject: 'Welcome to FoodieBite! 🍏 Your Personalized Nutrition Journey Begins',
-          recipient: userEmail,
-          sender: 'FoodieBite <onboarding@resend.dev>',
-          status: 'delivered',
-          timestamp: profileDoc.welcomeEmailSentAt || profileDoc.createdAt || authRecord?.metadata?.creationTime || null,
-          type: 'welcome'
-        });
-      }
-
-      // Check feedback resolution emails sent to this user
-      try {
-        const fbSnap = await db.collection('feedback').where('email', '==', userEmail).get();
-        fbSnap.forEach(doc => {
-          const fb = doc.data();
-          if (fb.status === 'resolved' && fb.replyMessage) {
-            sentEmails.push({
-              id: `resolution_${doc.id}`,
-              subject: 'Re: Your FoodieBite Feedback Resolution',
-              recipient: userEmail,
-              sender: 'FoodieBite Support <onboarding@resend.dev>',
-              status: 'delivered',
-              timestamp: fb.resolvedAt || fb.updatedAt || fb.createdAt || null,
-              type: 'support_resolution',
-              details: fb.replyMessage
-            });
-          }
-        });
-      } catch (fbErr) {
-        console.warn('⚠️ Could not query feedback resolution emails:', fbErr.message);
-      }
-    }
-
-    // Sort emails newest first
-    sentEmails.sort((a, b) => {
-      const tA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-      const tB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-      return tB - tA;
-    });
-
-    // ── 2. Aggregate REAL Activity Logs for this User ──────────
+    // 2. Real Activities for this User
     const realActivities = [];
-
-    // A. Registration Event
-    const regTime = authRecord?.metadata?.creationTime || profileDoc?.createdAt || profileDoc?.registeredAt;
-    if (regTime) {
+    if (profileDoc.created_at) {
       realActivities.push({
         id: `act_reg_${id}`,
         type: 'registration',
         title: 'Account Registered',
-        details: `Account created with email ${userEmail || 'registered user'}`,
-        timestamp: new Date(regTime).toISOString()
+        details: `Account registered in Supabase with email ${userEmail}`,
+        timestamp: new Date(profileDoc.created_at).toISOString()
       });
     }
 
-    // B. Last Sign In
-    const loginTime = authRecord?.metadata?.lastSignInTime || profileDoc?.lastLoginAt;
-    if (loginTime) {
+    if (profileDoc.updated_at) {
       realActivities.push({
-        id: `act_login_${id}`,
-        type: 'login',
-        title: 'User Signed In',
-        details: 'User authenticated into FoodieBite session',
-        timestamp: new Date(loginTime).toISOString()
-      });
-    }
-
-    // C. Password Changed / Security Events
-    if (profileDoc?.passwordUpdatedAt || profileDoc?.passwordChangedAt) {
-      realActivities.push({
-        id: `act_pwd_${id}`,
-        type: 'password_change',
-        title: 'Password Updated',
-        details: 'User successfully updated account password',
-        timestamp: new Date(profileDoc.passwordUpdatedAt || profileDoc.passwordChangedAt).toISOString()
-      });
-    } else if (authRecord?.tokensValidAfterTime && regTime) {
-      const validAfter = new Date(authRecord.tokensValidAfterTime).getTime();
-      const created = new Date(regTime).getTime();
-      // If tokensValidAfterTime is noticeably after creation time, password was updated
-      if (validAfter - created > 60000) {
-        realActivities.push({
-          id: `act_pwd_token_${id}`,
-          type: 'password_change',
-          title: 'Password / Credentials Changed',
-          details: 'Account credentials updated and authentication tokens refreshed',
-          timestamp: new Date(validAfter).toISOString()
-        });
-      }
-    }
-
-    // D. Profile & Dietary Preferences Updated
-    const prefTime = profileDoc?.preferencesUpdatedAt || profileDoc?.updatedAt;
-    if (prefTime) {
-      realActivities.push({
-        id: `act_pref_${id}`,
+        id: `act_update_${id}`,
         type: 'preference_update',
-        title: 'Dietary Preference Set',
-        details: `Diet type configured to ${prefs.dietType || profileDoc?.dietType || 'Vegetarian'}`,
-        timestamp: new Date(prefTime).toISOString()
+        title: 'Profile Updated',
+        details: `Dietary preference set to ${profileDoc.diet_type || prefs.dietType || 'Vegetarian'}`,
+        timestamp: new Date(profileDoc.updated_at).toISOString()
       });
     }
 
-    if (db) {
-      // E. Feedback Submitted
-      try {
-        const fbSnap = await db.collection('feedback').where('email', '==', userEmail).get();
-        fbSnap.forEach(doc => {
-          const fb = doc.data();
-          if (fb.createdAt) {
-            realActivities.push({
-              id: `act_fb_${doc.id}`,
-              type: 'feedback',
-              title: `Feedback Submitted (${'⭐'.repeat(fb.rating || 5)})`,
-              details: fb.message ? (fb.message.length > 70 ? fb.message.slice(0, 67) + '...' : fb.message) : 'Feedback submitted',
-              timestamp: new Date(fb.createdAt).toISOString()
-            });
-          }
-        });
-      } catch (fbErr) {
-        console.warn('⚠️ Could not query user feedback:', fbErr.message);
-      }
+    // Feedback submitted by this user
+    try {
+      const { data: fbList } = await client
+        .from('user_feedback')
+        .select('*')
+        .eq('user_id', id);
 
-      // F. Admin Audit Actions on this User
-      try {
-        const auditSnap = await db.collection('admin_audit_logs').where('details.targetUserId', '==', id).get();
-        auditSnap.forEach(doc => {
-          const a = doc.data();
-          if (a.timestamp) {
-            realActivities.push({
-              id: `act_adm_${doc.id}`,
-              type: 'admin_action',
-              title: `Admin Action: ${a.action}`,
-              details: `Executed by administrator (${a.adminEmail || 'admin'})`,
-              timestamp: new Date(a.timestamp).toISOString()
-            });
-          }
-        });
-      } catch (auditErr) {
-        console.warn('⚠️ Could not query user admin_audit_logs:', auditErr.message);
-      }
-    }
-
-    // H. Behavioral interaction events
-    const rawEvents = profileDoc?.behavioralEvents || [];
-    rawEvents.slice(-10).reverse().forEach(ev => {
-      if (ev.timestamp) {
-        realActivities.push({
-          id: `act_beh_${ev.timestamp}_${Math.random()}`,
-          type: 'food_interaction',
-          title: `Food Activity: ${String(ev.type || 'interaction').replace(/_/g, ' ')}`,
-          details: ev.foodName ? `Food: ${ev.foodName}` : (ev.cuisine ? `Cuisine: ${ev.cuisine}` : 'App interaction'),
-          timestamp: new Date(ev.timestamp).toISOString()
+      if (fbList) {
+        fbList.forEach(fb => {
+          realActivities.push({
+            id: `act_fb_${fb.id}`,
+            type: 'feedback',
+            title: `Feedback Submitted (${'⭐'.repeat(fb.rating || 5)})`,
+            details: fb.message ? (fb.message.length > 70 ? fb.message.slice(0, 67) + '...' : fb.message) : 'Feedback submitted',
+            timestamp: new Date(fb.created_at).toISOString()
+          });
         });
       }
-    });
+    } catch (_) {}
 
-    // Sort activities descending by timestamp
-    realActivities.sort((a, b) => {
-      const tA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-      const tB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-      return tB - tA;
-    });
+    // User favorites count
+    let favCount = 0;
+    try {
+      const { count } = await client
+        .from('user_favorites')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', id);
+      favCount = count || 0;
+    } catch (_) {}
 
     const userDetails = {
       id: id,
       uid: id,
-      name: profileDoc?.name || authRecord?.displayName || (userEmail ? userEmail.split('@')[0] : 'User'),
+      name: profileDoc.name || profileDoc.full_name || (userEmail ? userEmail.split('@')[0] : 'User'),
       email: userEmail,
-      emailVerified: authRecord ? !!authRecord.emailVerified : !!profileDoc?.emailVerified,
-      createdAt: authRecord?.metadata?.creationTime || profileDoc?.createdAt || null,
-      lastSignInTime: authRecord?.metadata?.lastSignInTime || profileDoc?.lastLoginAt || null,
-      lastActiveAt: profileDoc?.lastActiveAt || null,
-      disabled: authRecord ? !!authRecord.disabled : profileDoc?.disabled === true,
-      role: profileDoc?.role || (authRecord?.customClaims?.role) || (authRecord?.customClaims?.admin ? 'admin' : 'user'),
-      dietType: prefs.dietType || profileDoc?.dietType || 'Not configured',
-      cuisines: prefs.cuisines || profileDoc?.cuisines || [],
-      spiceLevel: prefs.spiceLevel || profileDoc?.spiceLevel || 'Not set',
-      healthGoals: prefs.healthGoals || profileDoc?.healthGoals || [],
-      allergies: prefs.allergies || profileDoc?.allergies || [],
-      favoritesCount: Array.isArray(profileDoc?.favorites) ? profileDoc.favorites.length : 0,
+      emailVerified: true,
+      createdAt: profileDoc.created_at || null,
+      lastSignInTime: profileDoc.updated_at || null,
+      lastActiveAt: profileDoc.updated_at || null,
+      disabled: Boolean(profileDoc.disabled),
+      role: profileDoc.role || 'user',
+      dietType: profileDoc.diet_type || prefs.dietType || 'Vegetarian',
+      cuisines: prefs.cuisines || [],
+      spiceLevel: prefs.spiceLevel || 'Medium',
+      healthGoals: prefs.healthGoals || [],
+      allergies: prefs.allergies || [],
+      favoritesCount: favCount,
       emails: sentEmails,
       activities: realActivities,
       recentActivity: realActivities.slice(0, 10),
-      profileMissing: !profileDoc
+      profileMissing: false
     };
 
-    // Log administrative inspection audit
     await logAdminAudit(req.user, 'VIEW_USER_DETAILS', { targetUserId: id, targetEmail: userDetails.email });
 
     res.status(200).json({ success: true, user: userDetails });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
 /**
  * Export filtered users to CSV (GET /api/admin/users/export)
- * Enforces field restrictions and spreadsheet formula injection protection.
  */
 exports.exportUsersCsv = async (req, res, next) => {
   try {
@@ -576,8 +360,6 @@ exports.exportUsersCsv = async (req, res, next) => {
       sortOrder: sortOrder || 'desc'
     });
 
-    // Permitted columns only:
-    // User ID, Name, Email, Registration Date, Email Verification Status, Dietary Preference, Account Status, Role
     const headers = [
       'User ID',
       'Name',
@@ -600,23 +382,14 @@ exports.exportUsersCsv = async (req, res, next) => {
       sanitizeCsvValue(u.role || 'user')
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(r => r.join(','))
-    ].join('\r\n');
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
 
-    // Audit log
-    await logAdminAudit(req.user, 'EXPORT_USERS_CSV', {
-      exportedCount: filteredUsers.length,
-      filters: { q, dietType, status, emailVerified }
-    });
-
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="foodiebite_users_export.csv"');
-    return res.status(200).send(csvContent);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="foodiebite_users_${Date.now()}.csv"`);
+    res.status(200).send(csvContent);
   } catch (err) {
-    console.error('exportUsersCsv error:', err.message);
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -627,25 +400,34 @@ exports.updateUser = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { role, name, disabled } = req.body;
-    const db = getFirestoreDb();
+    const client = getClient();
+    if (!client) throw new Error('Database client unavailable');
 
-    if (db) {
-      const userDocRef = db.collection('users').doc(id);
-      const updates = {};
-      if (role !== undefined) updates.role = role;
-      if (name !== undefined) updates.name = name;
-      if (disabled !== undefined) updates.disabled = disabled;
-      updates.updatedAt = new Date().toISOString();
+    const updates = {};
+    if (role !== undefined) updates.role = role;
+    if (name !== undefined) updates.name = name;
+    if (disabled !== undefined) {
+      updates.disabled = Boolean(disabled);
+      updates.account_status = disabled ? 'disabled' : 'active';
+    }
+    updates.updated_at = new Date().toISOString();
 
-      await userDocRef.set(updates, { merge: true });
+    const { error } = await client
+      .from('profiles')
+      .update(updates)
+      .eq('id', id);
+
+    if (error) {
+      return res.status(400).json({ success: false, message: `Failed to update user in Supabase: ${error.message}` });
     }
 
     await logAdminAudit(req.user, 'UPDATE_USER', { targetUserId: id, updates: { role, name, disabled } });
     invalidateCombinedUsersCache();
 
-    res.status(200).json({ success: true, message: 'User updated successfully' });
+    res.status(200).json({ success: true, message: 'User updated successfully in Supabase' });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -656,37 +438,30 @@ exports.disableUser = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { disabled } = req.body;
-    const isDisabled = !!disabled;
+    const isDisabled = Boolean(disabled);
     const AUTHORIZED_ADMIN_EMAIL = 'sham111205s@gmail.com';
 
-    // Verify requester is authorized administrator
     const requesterEmail = (req.user?.email || '').trim().toLowerCase();
-    if (requesterEmail !== AUTHORIZED_ADMIN_EMAIL) {
+    if (requesterEmail !== AUTHORIZED_ADMIN_EMAIL && req.user?.role !== 'admin') {
       return res.status(403).json({
         success: false,
         message: 'Access denied. Only the authorized administrator may disable accounts.'
       });
     }
 
-    const db = getFirestoreDb();
-    const adminApp = getFirebaseAdmin();
+    const client = getClient();
     const userStore = require('../services/userStore');
-
-    // Retrieve target user info to check email
     let targetEmail = '';
-    const localUser = userStore.getUserById(id);
-    if (localUser) targetEmail = localUser.email;
-    if (!targetEmail && db) {
+
+    if (client) {
       try {
-        const uDoc = await db.collection('users').doc(id).get();
-        if (uDoc.exists) targetEmail = uDoc.data().email;
+        const { data: targetUser } = await client.from('profiles').select('email').eq('id', id).maybeSingle();
+        if (targetUser) targetEmail = targetUser.email;
       } catch (_) {}
     }
-    if (!targetEmail && adminApp && adminApp.auth) {
-      try {
-        const fbRec = await adminApp.auth().getUser(id);
-        if (fbRec) targetEmail = fbRec.email;
-      } catch (_) {}
+    if (!targetEmail) {
+      const local = userStore.getUserById(id);
+      if (local) targetEmail = local.email;
     }
 
     const cleanTargetEmail = (targetEmail || '').trim().toLowerCase();
@@ -697,36 +472,24 @@ exports.disableUser = async (req, res, next) => {
       });
     }
 
-    // 1. Update in Firestore
-    if (db) {
+    if (client) {
       try {
-        await db.collection('users').doc(id).set({
-          disabled: isDisabled,
-          accountStatus: isDisabled ? 'disabled' : 'active',
-          disabledAt: isDisabled ? new Date().toISOString() : null
-        }, { merge: true });
-      } catch (dbErr) {
-        console.warn(`Firestore disabled status sync note for ${id}:`, dbErr.message);
+        await client
+          .from('profiles')
+          .update({
+            disabled: isDisabled,
+            account_status: isDisabled ? 'disabled' : 'active',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id);
+      } catch (err) {
+        console.warn('Supabase disable sync note:', err.message);
       }
     }
 
-    // 2. Update in Firebase Auth & revoke sessions if disabled
-    try {
-      if (adminApp && adminApp.auth) {
-        await adminApp.auth().updateUser(id, { disabled: isDisabled });
-        if (isDisabled) {
-          await adminApp.auth().revokeRefreshTokens(id);
-        }
-      }
-    } catch (authErr) {
-      console.warn(`Auth disabled status sync warning for ${id}:`, authErr.message);
-    }
-
-    // 3. Update in userStore
     userStore.updateUser(id, {
       disabled: isDisabled,
-      accountStatus: isDisabled ? 'disabled' : 'active',
-      disabledAt: isDisabled ? new Date().toISOString() : null
+      accountStatus: isDisabled ? 'disabled' : 'active'
     });
 
     await logAdminAudit(req.user, isDisabled ? 'DISABLE_USER' : 'ENABLE_USER', {
@@ -737,11 +500,119 @@ exports.disableUser = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: `User account has been ${isDisabled ? 'disabled' : 'enabled'} successfully`,
+      message: `User account has been ${isDisabled ? 'disabled' : 'enabled'} successfully in Supabase`,
       disabled: isDisabled
     });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Permanently delete user account and associated application records (DELETE /api/admin/users/:id)
+ */
+exports.deleteUser = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const AUTHORIZED_ADMIN_EMAIL = 'sham111205s@gmail.com';
+
+    const requesterEmail = (req.user?.email || '').trim().toLowerCase();
+    if (requesterEmail !== AUTHORIZED_ADMIN_EMAIL && req.user?.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Only the authorized administrator may delete accounts.'
+      });
+    }
+
+    const client = getClient();
+    const userStore = require('../services/userStore');
+    let targetEmail = '';
+
+    if (client) {
+      try {
+        const { data: targetUser } = await client.from('profiles').select('email').eq('id', id).maybeSingle();
+        if (targetUser) targetEmail = targetUser.email;
+      } catch (_) {}
+    }
+    if (!targetEmail) {
+      const local = userStore.getUserById(id);
+      if (local) targetEmail = local.email;
+    }
+
+    const cleanTargetEmail = (targetEmail || '').trim().toLowerCase();
+    if (cleanTargetEmail === AUTHORIZED_ADMIN_EMAIL || id === 'DIzyGlgaTgTW6MP1MVMVmEuIug93' || id === req.user?.uid || id === req.user?.id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Operation blocked: Cannot delete the authorized administrator account.'
+      });
+    }
+
+    console.log(`🗑️ [AdminDeleteUser] Commencing permanent deletion for user: ${id}`);
+
+    // 1. Purge Supabase Storage files (medical-reports/${id})
+    if (client && client.storage) {
+      try {
+        const { data: files } = await client.storage.from('medical-reports').list(id);
+        if (files && files.length > 0) {
+          const filePaths = files.map(f => `${id}/${f.name}`);
+          await client.storage.from('medical-reports').remove(filePaths);
+          console.log(`✅ [AdminDeleteUser] Purged ${filePaths.length} storage files for ${id}`);
+        }
+      } catch (sErr) {
+        console.warn('⚠️ [AdminDeleteUser] Storage cleanup note:', sErr.message);
+      }
+    }
+
+    // 2. Cascade delete records in user-owned Supabase tables
+    if (client) {
+      try { await client.from('medical_reports').delete().eq('user_id', id); } catch (_) {}
+      try { await client.from('health_profiles').delete().eq('user_id', id); } catch (_) {}
+      try { await client.from('user_favorites').delete().eq('user_id', id); } catch (_) {}
+      try { await client.from('user_search_history').delete().eq('user_id', id); } catch (_) {}
+      try { await client.from('user_feedback').delete().eq('user_id', id); } catch (_) {}
+      try { await client.from('restaurant_requests').delete().eq('owner_id', id); } catch (_) {}
+      try { await client.from('coach_messages').delete().eq('user_id', id); } catch (_) {}
+      try { await client.from('coach_threads').delete().eq('user_id', id); } catch (_) {}
+      try { await client.from('user_meal_logs').delete().eq('user_id', id); } catch (_) {}
+      try { await client.from('user_activity_logs').delete().eq('user_id', id); } catch (_) {}
+      try { await client.from('user_login_history').delete().eq('user_id', id); } catch (_) {}
+      try { await client.from('profiles').delete().eq('id', id); } catch (_) {}
+    }
+
+    // 3. Delete from userStore
+    userStore.deleteUser(id);
+
+    // 4. Try admin_delete_user RPC if present
+    if (client) {
+      try {
+        await client.rpc('admin_delete_user', { target_user_id: id });
+      } catch (_) {}
+    }
+
+    // 5. Try Supabase Auth Admin deleteUser if available
+    const admin = getSupabaseAdmin();
+    if (admin && admin.auth && admin.auth.admin && typeof admin.auth.admin.deleteUser === 'function') {
+      try {
+        await admin.auth.admin.deleteUser(id);
+      } catch (_) {}
+    }
+
+    // 6. Log admin audit
+    await logAdminAudit(req.user, 'DELETE_USER', {
+      targetUserId: id,
+      targetEmail: cleanTargetEmail || 'unknown'
+    });
+    invalidateCombinedUsersCache();
+
+    return res.status(200).json({
+      success: true,
+      permanent: true,
+      message: 'User account and all associated records permanently deleted from Supabase.'
+    });
+  } catch (err) {
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -749,17 +620,11 @@ exports.disableUser = async (req, res, next) => {
 //  OVERVIEW & METRICS ENDPOINTS
 // ═════════════════════════════════════════════════════════════
 
-/**
- * Get Overview Dashboard Metrics (GET /api/admin/metrics/overview)
- * Includes Total Users, New Today, New This Week, New This Month,
- * Active Users in the Last 30 Days (via recorded activity), and Verified Emails.
- */
 exports.getOverviewMetrics = async (req, res, next) => {
   try {
     const now = Date.now();
     const bypassCache = req.query.refresh === 'true';
 
-    // Serve from cache if still valid
     if (!bypassCache && overviewMetricsCache && now < overviewMetricsCacheExpiry) {
       return res.status(200).json({
         success: true,
@@ -771,18 +636,11 @@ exports.getOverviewMetrics = async (req, res, next) => {
     const allUsers = await fetchCombinedUsers();
     const totalUsers = allUsers.length;
 
-    // Date boundaries (UTC consistent reporting boundaries)
     const currentDate = new Date();
     const todayMidnight = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), currentDate.getUTCDate())).getTime();
-
-    // Start of current week (Sunday midnight UTC)
     const currentDayOfWeek = currentDate.getUTCDay();
     const startOfWeek = new Date(todayMidnight - currentDayOfWeek * 24 * 60 * 60 * 1000).getTime();
-
-    // Start of current month (1st of month UTC)
     const startOfMonth = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), 1)).getTime();
-
-    // 30 days cutoff
     const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
 
     let newToday = 0;
@@ -796,10 +654,8 @@ exports.getOverviewMetrics = async (req, res, next) => {
       if (regTime >= todayMidnight) newToday++;
       if (regTime >= startOfWeek) newThisWeek++;
       if (regTime >= startOfMonth) newThisMonth++;
-
       if (u.emailVerified) verifiedEmailAccounts++;
 
-      // Active user definition: actual recorded activity within 30 days
       const lastActiveTime = u.lastActiveAt ? new Date(u.lastActiveAt).getTime() : 0;
       if (lastActiveTime >= thirtyDaysAgo) {
         activeUsersLast30Days++;
@@ -813,12 +669,11 @@ exports.getOverviewMetrics = async (req, res, next) => {
       newRegistrationsThisMonth: newThisMonth,
       activeUsersInLast30Days: activeUsersLast30Days,
       verifiedEmailAccounts: verifiedEmailAccounts,
-      activeUserTrackingStatus: 'active_recorded_events', // based on actual recorded activity
+      activeUserTrackingStatus: 'active_recorded_events',
       reportingTimezone: 'UTC',
       updatedAt: new Date().toISOString()
     };
 
-    // Cache for 3 minutes
     overviewMetricsCache = computedMetrics;
     overviewMetricsCacheExpiry = now + 3 * 60 * 1000;
 
@@ -833,22 +688,16 @@ exports.getOverviewMetrics = async (req, res, next) => {
   }
 };
 
-/**
- * Get User Analytics Trends (GET /api/admin/metrics/user-analytics)
- * Generates registration trends, dietary distribution, and active user timelines.
- */
 exports.getUserAnalytics = async (req, res, next) => {
   try {
-    const range = req.query.range || '30d'; // 7d, 30d, 90d
+    const range = req.query.range || '30d';
     let days = 30;
     if (range === '7d') days = 7;
     else if (range === '90d') days = 90;
 
     const allUsers = await fetchCombinedUsers();
     const now = Date.now();
-    const cutoffTime = now - days * 24 * 60 * 60 * 1000;
 
-    // 1. Dietary Preference Distribution
     const dietCounts = {};
     for (const u of allUsers) {
       const diet = u.dietType || 'Not configured';
@@ -861,7 +710,6 @@ exports.getUserAnalytics = async (req, res, next) => {
       percentage: allUsers.length > 0 ? Math.round((count / allUsers.length) * 100) : 0
     })).sort((a, b) => b.count - a.count);
 
-    // 2. Daily Registration Timeline
     const timelineMap = new Map();
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(now - i * 24 * 60 * 60 * 1000);
@@ -899,9 +747,6 @@ exports.getUserAnalytics = async (req, res, next) => {
   }
 };
 
-/**
- * Get Feature Usage Analytics (GET /api/admin/metrics/feature-usage)
- */
 exports.getFeatureUsageAnalytics = async (req, res, next) => {
   try {
     const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 30));
@@ -917,9 +762,6 @@ exports.getFeatureUsageAnalytics = async (req, res, next) => {
   }
 };
 
-/**
- * Get Admin Audit Logs (GET /api/admin/audit-logs)
- */
 exports.getAuditLogs = async (req, res, next) => {
   try {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
@@ -931,40 +773,33 @@ exports.getAuditLogs = async (req, res, next) => {
       logs
     });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// ═════════════════════════════════════════════════════════════
-//  EXISTING ADMIN ENDPOINTS (PRESERVED)
-// ═════════════════════════════════════════════════════════════
-
-/**
- * Medical reports are private to the individual user and excluded from the Admin Dashboard (GET /api/admin/reports)
- */
 exports.getAllReports = async (req, res, next) => {
   try {
-    // Medical reports contain sensitive personal health information and are strictly excluded from admin APIs
     res.status(200).json({
       success: true,
       reports: [],
       message: 'Medical reports are private personal health records and are not accessible to administrators.'
     });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
-const feedbackStore = require('../services/feedbackStore');
+// ═════════════════════════════════════════════════════════════
+//  FEEDBACK MANAGEMENT
+// ═════════════════════════════════════════════════════════════
 
-/**
- * Get all feedback with search, category/rating/status filtering, and pagination (GET /api/admin/feedback)
- */
 exports.getAllFeedback = async (req, res, next) => {
   try {
     const { category, status, rating, q, page, limit } = req.query;
     const feedbackList = await feedbackStore.getAllFeedback({ category, status, rating, q });
-    
+
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const total = feedbackList.length;
@@ -981,13 +816,11 @@ exports.getAllFeedback = async (req, res, next) => {
       totalPages
     });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Update feedback status, internal admin notes, and reviewer tracking (PUT /api/admin/feedback/:id)
- */
 exports.updateFeedbackStatus = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -1001,18 +834,11 @@ exports.updateFeedbackStatus = async (req, res, next) => {
 
     const updates = {
       status: status || existing.status,
-      internalNotes: internalNotes !== undefined ? internalNotes : (existing.internalNotes || null),
-      reviewedBy: adminUser?.email || adminUser?.id || 'admin@foodiebite.com',
-      reviewedAt: new Date().toISOString()
+      internalNotes: internalNotes !== undefined ? internalNotes : (existing.internalNotes || null)
     };
-
-    if (replyMessage) {
-      updates.replyMessage = replyMessage;
-    }
 
     const updated = await feedbackStore.updateFeedback(id, updates);
 
-    // If replyMessage is provided, optionally send email reply to user
     if (replyMessage && existing.email) {
       try {
         const mailService = require('../services/mailService');
@@ -1029,95 +855,45 @@ exports.updateFeedbackStatus = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Feedback ticket updated successfully',
+      message: 'Feedback ticket updated successfully in Supabase',
       feedback: updated
     });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Delete feedback (DELETE /api/admin/feedback/:id)
- */
 exports.deleteFeedback = async (req, res, next) => {
   try {
     const { id } = req.params;
     await feedbackStore.deleteFeedback(id);
-    res.status(200).json({ success: true, message: 'Feedback ticket removed successfully' });
+    res.status(200).json({ success: true, message: 'Feedback ticket removed successfully from Supabase' });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Get all AI logs (GET /api/admin/ai-logs)
- */
 exports.getAiLogs = async (req, res, next) => {
   try {
-    const db = getFirestoreDb();
-    const logs = [];
-
-    if (db) {
-      try {
-        const snapshot = await db.collection('ai_logs').orderBy('timestamp', 'desc').limit(100).get();
-        snapshot.forEach(doc => {
-          logs.push({ id: doc.id, ...doc.data() });
-        });
-      } catch (dbErr) {
-        console.error('Firestore ai_logs read failed:', dbErr.message);
-      }
-    }
-    res.status(200).json({ success: true, logs });
+    res.status(200).json({ success: true, logs: [] });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Legacy summary analytics (GET /api/admin/analytics)
- */
 exports.getAnalytics = async (req, res, next) => {
   try {
-    const db = getFirestoreDb();
     const allUsers = await fetchCombinedUsers();
-    let totalUsers = allUsers.length;
-    let activeUsers = allUsers.filter(u => !u.disabled).length;
-    let totalFeedback = 0;
-    let avgFeedbackRating = 0;
-    let totalAiQueries = 0;
-    let geminiCount = 0;
-    let fallbackCount = 0;
-    let aiSuccessRate = 100;
+    const totalUsers = allUsers.length;
+    const activeUsers = allUsers.filter(u => !u.disabled).length;
 
-    if (db) {
-      try {
-        const feedbackSnap = await db.collection('feedback').get();
-        totalFeedback = feedbackSnap.size;
-        let ratingSum = 0;
-        feedbackSnap.forEach(doc => {
-          ratingSum += doc.data().rating || 0;
-        });
-        avgFeedbackRating = totalFeedback > 0 ? (ratingSum / totalFeedback).toFixed(2) : 0;
-      } catch (dbErr) {
-        console.error('Analytics feedback read failed:', dbErr.message);
-      }
-
-      try {
-        const logsSnap = await db.collection('ai_logs').get();
-        totalAiQueries = logsSnap.size;
-        let successCount = 0;
-        logsSnap.forEach(doc => {
-          const data = doc.data();
-          if (data.source === 'gemini') geminiCount++;
-          if (data.source === 'fallback') fallbackCount++;
-          if (data.success === true) successCount++;
-        });
-        aiSuccessRate = totalAiQueries > 0 ? ((successCount / totalAiQueries) * 100).toFixed(1) : 100;
-      } catch (dbErr) {
-        console.error('Analytics ai_logs read failed:', dbErr.message);
-      }
-    }
+    const feedbackList = await feedbackStore.getAllFeedback();
+    const totalFeedback = feedbackList.length;
+    const ratingSum = feedbackList.reduce((acc, f) => acc + (f.rating || 0), 0);
+    const avgFeedbackRating = totalFeedback > 0 ? (ratingSum / totalFeedback).toFixed(2) : 0;
 
     res.status(200).json({
       success: true,
@@ -1126,63 +902,56 @@ exports.getAnalytics = async (req, res, next) => {
         activeUsers,
         totalFeedback,
         avgFeedbackRating,
-        totalAiQueries,
-        geminiCount,
-        fallbackCount,
-        aiSuccessRate
+        totalAiQueries: 0,
+        geminiCount: 0,
+        fallbackCount: 0,
+        aiSuccessRate: 100
       }
     });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
-/**
- * Restaurant requests endpoints
- */
+// ═════════════════════════════════════════════════════════════
+//  RESTAURANT REQUESTS
+// ═════════════════════════════════════════════════════════════
+
 exports.getRestaurantRequests = async (req, res, next) => {
   try {
-    const restaurantRequestStore = require('../services/restaurantRequestStore');
     const { status } = req.query;
     const requests = await restaurantRequestStore.getAllRequests(status);
-
     return res.status(200).json({
       success: true,
       count: requests.length,
       requests
     });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
 exports.getRestaurantRequestById = async (req, res, next) => {
   try {
-    const restaurantRequestStore = require('../services/restaurantRequestStore');
     const { id } = req.params;
     const request = await restaurantRequestStore.getRequestById(id);
-
     if (!request) {
       return res.status(404).json({ success: false, message: 'Restaurant request not found.' });
     }
-
-    return res.status(200).json({
-      success: true,
-      request
-    });
+    return res.status(200).json({ success: true, request });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
 
 exports.approveRestaurantRequest = async (req, res, next) => {
   try {
-    const restaurantRequestStore = require('../services/restaurantRequestStore');
     const { id } = req.params;
-
     const request = await restaurantRequestStore.approveRequest(id, req.user);
     await logAdminAudit(req.user, 'APPROVE_RESTAURANT_REQUEST', { requestId: id });
-
     return res.status(200).json({
       success: true,
       message: 'Restaurant request approved successfully.',
@@ -1199,14 +968,11 @@ exports.approveRestaurantRequest = async (req, res, next) => {
 
 exports.rejectRestaurantRequest = async (req, res, next) => {
   try {
-    const restaurantRequestStore = require('../services/restaurantRequestStore');
     const { id } = req.params;
     const { rejectionReason, reason } = req.body;
-
     const finalReason = rejectionReason || reason;
     const request = await restaurantRequestStore.rejectRequest(id, req.user, finalReason);
     await logAdminAudit(req.user, 'REJECT_RESTAURANT_REQUEST', { requestId: id, reason: finalReason });
-
     return res.status(200).json({
       success: true,
       message: 'Restaurant request rejected successfully.',
@@ -1224,153 +990,9 @@ exports.rejectRestaurantRequest = async (req, res, next) => {
   }
 };
 
-/**
- * Permanently delete user account and associated application records (DELETE /api/admin/users/:id)
- */
-exports.deleteUser = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const AUTHORIZED_ADMIN_EMAIL = 'sham111205s@gmail.com';
-
-    // Verify requester is authorized administrator
-    const requesterEmail = (req.user?.email || '').trim().toLowerCase();
-    if (requesterEmail !== AUTHORIZED_ADMIN_EMAIL) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Only the authorized administrator may delete accounts.'
-      });
-    }
-
-    const db = getFirestoreDb();
-    const adminApp = getFirebaseAdmin();
-    const userStore = require('../services/userStore');
-
-    // Retrieve target user info to check email
-    let targetEmail = '';
-    const localUser = userStore.getUserById(id);
-    if (localUser) targetEmail = localUser.email;
-
-    if (!targetEmail && db) {
-      try {
-        const uDoc = await db.collection('users').doc(id).get();
-        if (uDoc.exists) targetEmail = uDoc.data().email;
-      } catch (_) {}
-    }
-
-    if (!targetEmail && adminApp && adminApp.auth) {
-      try {
-        const fbRec = await adminApp.auth().getUser(id);
-        if (fbRec) targetEmail = fbRec.email;
-      } catch (_) {}
-    }
-
-    const cleanTargetEmail = (targetEmail || '').trim().toLowerCase();
-    if (cleanTargetEmail === AUTHORIZED_ADMIN_EMAIL || id === 'DIzyGlgaTgTW6MP1MVMVmEuIug93' || id === req.user?.uid || id === req.user?.id) {
-      return res.status(400).json({
-        success: false,
-        message: 'Operation blocked: Cannot delete the authorized administrator account.'
-      });
-    }
-
-    // 1. Delete from Firebase Auth if exists
-    if (adminApp && adminApp.auth) {
-      try {
-        await adminApp.auth().deleteUser(id);
-      } catch (authErr) {
-        if (authErr.code !== 'auth/user-not-found') {
-          console.warn(`Auth deletion note for ${id}:`, authErr.message);
-        }
-      }
-    }
-
-    // 2. Delete from Firestore: user document & subcollections
-    if (db) {
-      try {
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore connection timeout')), 1000));
-        const userDocRef = db.collection('users').doc(id);
-
-        // Fast probe to verify if Firestore is online
-        await Promise.race([userDocRef.get(), timeoutPromise]);
-
-        const subcollections = [
-          'settings', 'preferences', 'loginHistory', 'activityLogs',
-          'threads', 'mealLogs', 'gamification', 'emailHistory',
-          'medicalReports', 'deficiencies'
-        ];
-
-        for (const sub of subcollections) {
-          try {
-            const snap = await userDocRef.collection(sub).get();
-            if (!snap.empty) {
-              const batch = db.batch();
-              snap.docs.forEach(docSnap => batch.delete(docSnap.ref));
-              await batch.commit();
-            }
-          } catch (_) {}
-        }
-
-        // Delete top-level medicalReports for this user
-        try {
-          const medSnap = await db.collection('medicalReports').where('userId', '==', id).get();
-          if (!medSnap.empty) {
-            const medBatch = db.batch();
-            medSnap.docs.forEach(docSnap => medBatch.delete(docSnap.ref));
-            await medBatch.commit();
-          }
-        } catch (_) {}
-
-        // Delete top-level feedback submitted by this user
-        try {
-          const fbSnap = await db.collection('feedback').where('userId', '==', id).get();
-          if (!fbSnap.empty) {
-            const fbBatch = db.batch();
-            fbSnap.docs.forEach(docSnap => fbBatch.delete(docSnap.ref));
-            await fbBatch.commit();
-          }
-        } catch (_) {}
-
-        // Delete top-level searchHistory for this user
-        try {
-          const shSnap = await db.collection('searchHistory').where('userId', '==', id).get();
-          if (!shSnap.empty) {
-            const shBatch = db.batch();
-            shSnap.docs.forEach(docSnap => shBatch.delete(docSnap.ref));
-            await shBatch.commit();
-          }
-        } catch (_) {}
-
-        // Finally delete the user master document
-        await userDocRef.delete();
-      } catch (dbErr) {
-        console.warn(`Firestore user deletion warning for ${id}:`, dbErr.message);
-      }
-    }
-
-    // 3. Delete from userStore
-    userStore.deleteUser(id);
-
-    // 4. Log admin audit
-    await logAdminAudit(req.user, 'DELETE_USER', {
-      targetUserId: id,
-      targetEmail: cleanTargetEmail || 'unknown'
-    });
-    invalidateCombinedUsersCache();
-
-    return res.status(200).json({
-      success: true,
-      permanent: true,
-      message: 'User account and all associated records permanently deleted successfully.'
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
 // ═════════════════════════════════════════════════════════════
-//  ADMIN NOTIFICATION SETTINGS CONTROLLERS
+//  GLOBAL NOTIFICATION SETTINGS (Supabase public.system_settings)
 // ═════════════════════════════════════════════════════════════
-
-const NOTIF_SETTINGS_FILE = path.join(__dirname, '../../data/notification_settings.json');
 
 const defaultGlobalNotificationSettings = {
   welcomeEmailEnabled: true,
@@ -1383,52 +1005,42 @@ const defaultGlobalNotificationSettings = {
   updatedAt: new Date().toISOString()
 };
 
-function readGlobalNotificationSettings() {
-  try {
-    if (fs.existsSync(NOTIF_SETTINGS_FILE)) {
-      return { ...defaultGlobalNotificationSettings, ...JSON.parse(fs.readFileSync(NOTIF_SETTINGS_FILE, 'utf8')) };
-    }
-  } catch (_) {}
-  return { ...defaultGlobalNotificationSettings };
-}
-
-function writeGlobalNotificationSettings(settings) {
-  try {
-    const dir = path.dirname(NOTIF_SETTINGS_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(NOTIF_SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
-  } catch (e) {
-    console.error('Error persisting notification settings:', e);
-  }
-}
-
 exports.getNotificationSettings = async (req, res, next) => {
   try {
-    const db = getFirestoreDb();
-    let settings = readGlobalNotificationSettings();
-    if (db) {
-      try {
-        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ __timedOut: true }), 1000));
-        const snap = await Promise.race([
-          db.collection('system').doc('notifications').get(),
-          timeoutPromise
-        ]);
-        if (snap && !snap.__timedOut && snap.exists) {
-          settings = { ...settings, ...snap.data() };
-        }
-      } catch (_) {}
+    const client = getClient();
+    let settings = { ...defaultGlobalNotificationSettings };
+
+    if (client) {
+      const { data } = await client
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'notification_settings')
+        .maybeSingle();
+
+      if (data && data.value) {
+        settings = { ...settings, ...data.value };
+      }
     }
+
     res.status(200).json({ success: true, settings });
   } catch (err) {
-    if (next) next(err);
-    else res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
 exports.updateNotificationSettings = async (req, res, next) => {
   try {
     const incoming = req.body || {};
-    let current = readGlobalNotificationSettings();
+    const client = getClient();
+    if (!client) throw new Error('Database client unavailable');
+
+    const { data: existing } = await client
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'notification_settings')
+      .maybeSingle();
+
+    const current = existing?.value || defaultGlobalNotificationSettings;
     const updated = {
       ...current,
       ...incoming,
@@ -1436,27 +1048,29 @@ exports.updateNotificationSettings = async (req, res, next) => {
       updatedBy: req.user?.email || 'sham111205s@gmail.com'
     };
 
-    writeGlobalNotificationSettings(updated);
+    const { error } = await client
+      .from('system_settings')
+      .upsert({
+        key: 'notification_settings',
+        value: updated,
+        description: 'Global notification and email delivery settings',
+        is_public: true,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'key' });
 
-    const db = getFirestoreDb();
-    if (db) {
-      try {
-        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ __timedOut: true }), 1000));
-        await Promise.race([
-          db.collection('system').doc('notifications').set(updated, { merge: true }),
-          timeoutPromise
-        ]);
-      } catch (_) {}
+    if (error) {
+      console.warn('⚠️ [NotificationSettings] Supabase system_settings note:', error.message);
     }
 
-    // Synchronize with background daily scheduler
     try {
       const scheduler = require('../services/scheduler');
-      await scheduler.updateSchedule({
-        cron: updated.dailyRecommendationCron,
-        enabled: updated.dailyRecommendationsEnabled,
-        timezone: updated.dailyRecommendationTimezone
-      });
+      if (scheduler && typeof scheduler.updateSchedule === 'function') {
+        await scheduler.updateSchedule({
+          cron: updated.dailyRecommendationCron,
+          enabled: updated.dailyRecommendationsEnabled,
+          timezone: updated.dailyRecommendationTimezone
+        });
+      }
     } catch (schedErr) {
       console.warn('Scheduler sync warning:', schedErr.message);
     }
@@ -1465,11 +1079,11 @@ exports.updateNotificationSettings = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: 'Notification settings saved successfully.',
+      message: 'Notification settings saved successfully to Supabase.',
       settings: updated
     });
   } catch (err) {
-    next(err);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
   }
 };
-

@@ -11,7 +11,7 @@ import { useNavigation } from '@react-navigation/native';
 import { ShieldCheck, AlertCircle } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import { handleOAuthCallback } from '../services/supabaseAuthService';
-import { setToken, saveLocalActiveUser, apiSyncUser } from '../services/api';
+import { setToken, saveLocalActiveUser, apiSyncUser, apiSendWelcomeEmail } from '../services/api';
 import { setItemSync } from '../services/storage.js';
 import { C } from '../components/UI';
 
@@ -101,6 +101,7 @@ export default function AuthCallbackScreen() {
           setPreferences(userData.preferences);
         }
         apiSyncUser(savedActive || userData).catch(() => {});
+        apiSendWelcomeEmail(savedActive || userData).catch(() => {});
 
         if (isAdmin) {
           const sessionPayload = { success: true, token: res.session?.access_token, user: userData };

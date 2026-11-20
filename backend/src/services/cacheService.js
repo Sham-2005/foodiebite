@@ -5,7 +5,7 @@
 //  Tier 2: Persistent Firestore Document Cache
 // ─────────────────────────────────────────────────────────────
 
-const admin = require('firebase-admin');
+const { admin } = require('../config/firebase');
 
 // ── Lazy Firestore getter — never crashes on module load ──────
 function getDb() {

@@ -27,7 +27,15 @@ export function launchImageLibrary(_options = {}) {
 
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'application/pdf,.pdf';
+    if (_options.accept) {
+      input.accept = _options.accept;
+    } else if (_options.mediaType === 'photo') {
+      input.accept = 'image/jpeg,image/png,image/webp,image/jpg';
+    } else if (_options.mediaType === 'document') {
+      input.accept = 'application/pdf,.pdf';
+    } else {
+      input.accept = 'image/jpeg,image/png,image/webp,image/jpg,application/pdf,.pdf';
+    }
     input.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none;';
 
     let settled = false;

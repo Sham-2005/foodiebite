@@ -144,23 +144,22 @@ app.get('/api/debug/gemini', (req, res) => {
   });
 });
 
-app.get('/api/debug/firestore', async (req, res) => {
+app.get('/api/debug/supabase', async (req, res) => {
   try {
-    const admin = require('firebase-admin');
-    if (admin.apps.length === 0) {
-      admin.initializeApp({
-        projectId: process.env.FIREBASE_PROJECT_ID || 'mock-foodiebite'
-      });
+    const { getSupabaseClient } = require('./config/supabase');
+    const client = getSupabaseClient();
+    if (!client) {
+      return res.status(200).json({ supabaseConnected: false, message: 'Supabase client not initialized' });
     }
-    const db = admin.firestore();
-    await db.collection('apiHealth').limit(1).get();
+    const { error } = await client.from('medical_reports').select('id').limit(1);
     res.status(200).json({
-      firestoreConnected: true
+      supabaseConnected: !error,
+      error: error ? error.message : null
     });
   } catch (err) {
-    console.error('Debug Firestore check failed:', err.message);
     res.status(200).json({
-      firestoreConnected: false
+      supabaseConnected: false,
+      error: err.message
     });
   }
 });
@@ -246,11 +245,23 @@ const server = app.listen(PORT, () => {
   } catch (err) {
     console.error('❌ Failed to initialize background scheduler:', err);
   }
+
+  // Start automated 9:00 AM user-timezone email scheduler
+  try {
+    const emailScheduler = require('./services/emailScheduler');
+    emailScheduler.start();
+  } catch (err) {
+    console.error('❌ Failed to initialize automated email scheduler:', err);
+  }
 });
 
 // ── Graceful Shutdown Handler ─────────────────────────
 function gracefulShutdown(signal) {
   console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
+  try {
+    const emailScheduler = require('./services/emailScheduler');
+    emailScheduler.stop();
+  } catch (_) {}
   server.close(() => {
     console.log('✅ HTTP server closed successfully.');
     process.exit(0);

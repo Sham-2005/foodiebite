@@ -12,7 +12,7 @@ function isAndroidPlatform() {
     let p = null;
     try {
       p = require('react-native').Platform;
-    } catch (_) {}
+    } catch (_) { }
     if (p && p.OS === 'android') {
       return true;
     }
@@ -57,7 +57,7 @@ export async function signOutFromGoogle() {
         if (typeof signOutFromGoogleAndroid === 'function') {
           return signOutFromGoogleAndroid();
         }
-      } catch (_) {}
+      } catch (_) { }
     }
   }
   return signOutFromGoogleWeb();
