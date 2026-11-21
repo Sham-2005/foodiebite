@@ -30,8 +30,8 @@ const mailService = require('../services/mailService');
  */
 function getSupabaseClientForRequest(token) {
   return (token ? supabaseConfig.getUserSupabaseClient(token) : null) ||
-         supabaseConfig.getSupabaseAdmin() ||
-         supabaseConfig.getSupabaseClient();
+    supabaseConfig.getSupabaseAdmin() ||
+    supabaseConfig.getSupabaseClient();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -327,14 +327,14 @@ exports.addFavoriteFood = async (req, res, next) => {
       return res.status(400).json({ success: false, message: `Failed to save favorite in Supabase: ${error.message}` });
     }
 
-    trackFeatureUsage('favorites_added', userId).catch(() => {});
+    trackFeatureUsage('favorites_added', userId).catch(() => { });
     recordBehaviorEvent(userId, {
       type: 'recommendation_favorited',
       foodId,
       foodName,
       cuisine,
       ingredients: food.ingredients
-    }).catch(() => {});
+    }).catch(() => { });
 
     return res.status(200).json({
       success: true,
@@ -375,11 +375,11 @@ exports.removeFavoriteFood = async (req, res, next) => {
       return res.status(400).json({ success: false, message: `Failed to remove favorite from Supabase: ${error.message}` });
     }
 
-    trackFeatureUsage('favorites_removed', userId).catch(() => {});
+    trackFeatureUsage('favorites_removed', userId).catch(() => { });
     recordBehaviorEvent(userId, {
       type: 'recommendation_unfavorited',
       foodId
-    }).catch(() => {});
+    }).catch(() => { });
 
     return res.status(200).json({
       success: true,
@@ -556,7 +556,7 @@ exports.resetBehaviorLearning = async (req, res, next) => {
 // Re-exports from medicalController
 exports.extractBiomarkersAndRecommendations = extractBiomarkersAndRecommendations;
 exports.uploadMedicalReport = medicalController.uploadMedicalReport;
-exports.getMedicalReports    = medicalController.getMedicalReports;
+exports.getMedicalReports = medicalController.getMedicalReports;
 exports.deleteMedicalReport = medicalController.deleteMedicalReport;
 
 // ═══════════════════════════════════════════════════════════════
@@ -636,7 +636,7 @@ exports.syncUser = async (req, res) => {
             console.warn('⚠️ [WelcomeEmail] Asynchronous registration dispatch note:', err.message);
           });
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     return res.status(200).json({
@@ -754,7 +754,7 @@ exports.deleteUserAccount = async (req, res) => {
       if (rpcErr && rpcErr.code !== 'PGRST202') {
         console.warn('⚠️ [DeleteAccount] RPC delete_user_account note:', rpcErr.message);
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // 5. If backend has admin auth client with deleteUser capability
     const admin = supabaseConfig.getSupabaseAdmin();

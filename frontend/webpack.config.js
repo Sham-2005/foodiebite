@@ -90,7 +90,7 @@ module.exports = {
     path: path.resolve(__dirname, 'build'),
     filename: '[name].[contenthash:8].js',
     chunkFilename: '[name].[contenthash:8].chunk.js',
-    publicPath: '/',
+    publicPath: process.env.PUBLIC_URL || '/',
     clean: true,
   },
   optimization: {

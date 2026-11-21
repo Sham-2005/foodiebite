@@ -1,0 +1,32 @@
+{
+  "name": "foodiebite-android-appium-enterprise",
+  "version": "1.0.0",
+  "description": "Enterprise-Grade Android Appium Mobile Automation, CI/CD Pipeline & GitHub Pages Reporting Suite",
+  "main": "runners/masterRunner.js",
+  "scripts": {
+    "test": "node runners/masterRunner.js",
+    "test:emulator": "node runners/masterRunner.js --target emulator",
+    "test:device": "node runners/masterRunner.js --target device",
+    "test:parallel": "node runners/masterRunner.js --parallel 2",
+    "report:generate": "node runners/masterRunner.js --report-only",
+    "report:deploy": "node scripts/deployGitHubPages.js"
+  },
+  "keywords": [
+    "appium",
+    "android",
+    "mobile-automation",
+    "sdet",
+    "ci-cd",
+    "github-actions",
+    "github-pages",
+    "exceljs",
+    "enterprise-qa"
+  ],
+  "author": "FoodieBite Mobile QA & DevSecOps Architecture Team",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "selenium-webdriver": "^4.27.0"
+  }
+}

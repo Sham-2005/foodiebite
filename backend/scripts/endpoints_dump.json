@@ -1,0 +1,522 @@
+[
+  {
+    "method": "GET",
+    "path": "/health"
+  },
+  {
+    "method": "GET",
+    "path": "/ready"
+  },
+  {
+    "method": "GET",
+    "path": "/api/debug/ai"
+  },
+  {
+    "method": "GET",
+    "path": "/api/debug/tars"
+  },
+  {
+    "method": "GET",
+    "path": "/api/debug/gemini"
+  },
+  {
+    "method": "GET",
+    "path": "/api/debug/supabase"
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/register"
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/login"
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/me"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/auth/password"
+  },
+  {
+    "method": "POST",
+    "path": "/api/user/sync"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/user/account"
+  },
+  {
+    "method": "GET",
+    "path": "/api/user/profile"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/user/profile"
+  },
+  {
+    "method": "GET",
+    "path": "/api/user/preferences"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/user/preferences"
+  },
+  {
+    "method": "POST",
+    "path": "/api/user/test-daily-email"
+  },
+  {
+    "method": "GET",
+    "path": "/api/user/favorites"
+  },
+  {
+    "method": "POST",
+    "path": "/api/user/favorites/food"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/user/favorites/food/:foodId"
+  },
+  {
+    "method": "GET",
+    "path": "/api/user/medical"
+  },
+  {
+    "method": "POST",
+    "path": "/api/user/medical"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/user/medical/:reportId"
+  },
+  {
+    "method": "GET",
+    "path": "/api/user/search-history"
+  },
+  {
+    "method": "POST",
+    "path": "/api/user/search-history"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/user/search-history"
+  },
+  {
+    "method": "POST",
+    "path": "/api/user/behavior/event"
+  },
+  {
+    "method": "GET",
+    "path": "/api/user/behavior/profile"
+  },
+  {
+    "method": "POST",
+    "path": "/api/user/behavior/reset"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/user/behavior/learning"
+  },
+  {
+    "method": "POST",
+    "path": "/api/medical/upload"
+  },
+  {
+    "method": "GET",
+    "path": "/api/medical/reports"
+  },
+  {
+    "method": "GET",
+    "path": "/api/medical/report/:reportId"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/medical/report/:reportId"
+  },
+  {
+    "method": "GET",
+    "path": "/api/medical/health-profile"
+  },
+  {
+    "method": "POST",
+    "path": "/api/medical/manual-values"
+  },
+  {
+    "method": "GET",
+    "path": "/api/medical/history"
+  },
+  {
+    "method": "POST",
+    "path": "/api/food/scan-nutrition"
+  },
+  {
+    "method": "GET",
+    "path": "/api/food/recommendations"
+  },
+  {
+    "method": "GET",
+    "path": "/api/food/search"
+  },
+  {
+    "method": "GET",
+    "path": "/api/food/delivery-link"
+  },
+  {
+    "method": "POST",
+    "path": "/api/food/compare"
+  },
+  {
+    "method": "GET",
+    "path": "/api/food/mood"
+  },
+  {
+    "method": "GET",
+    "path": "/api/food/weather"
+  },
+  {
+    "method": "GET",
+    "path": "/api/food/dna"
+  },
+  {
+    "method": "GET",
+    "path": "/api/food/:barcode"
+  },
+  {
+    "method": "POST",
+    "path": "/api/foods/scan-nutrition"
+  },
+  {
+    "method": "GET",
+    "path": "/api/foods/recommendations"
+  },
+  {
+    "method": "GET",
+    "path": "/api/foods/search"
+  },
+  {
+    "method": "GET",
+    "path": "/api/foods/delivery-link"
+  },
+  {
+    "method": "POST",
+    "path": "/api/foods/compare"
+  },
+  {
+    "method": "GET",
+    "path": "/api/foods/mood"
+  },
+  {
+    "method": "GET",
+    "path": "/api/foods/weather"
+  },
+  {
+    "method": "GET",
+    "path": "/api/foods/dna"
+  },
+  {
+    "method": "GET",
+    "path": "/api/foods/:barcode"
+  },
+  {
+    "method": "POST",
+    "path": "/api/coach"
+  },
+  {
+    "method": "POST",
+    "path": "/api/analytics/events"
+  },
+  {
+    "method": "POST",
+    "path": "/api/analytics/events/batch"
+  },
+  {
+    "method": "GET",
+    "path": "/api/analytics/summary"
+  },
+  {
+    "method": "GET",
+    "path": "/api/analytics/overview"
+  },
+  {
+    "method": "GET",
+    "path": "/api/analytics/recommendations"
+  },
+  {
+    "method": "GET",
+    "path": "/api/analytics/recommendations/export"
+  },
+  {
+    "method": "GET",
+    "path": "/api/analytics/trends"
+  },
+  {
+    "method": "GET",
+    "path": "/api/analytics/segmentation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/analytics/segmentation/refresh"
+  },
+  {
+    "method": "GET",
+    "path": "/api/analytics/experiments"
+  },
+  {
+    "method": "POST",
+    "path": "/api/analytics/experiments"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/analytics/experiments/:id/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/analytics/experiments/:id/results"
+  },
+  {
+    "method": "POST",
+    "path": "/api/feedback"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/feedback/:id/resolve"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/feedback/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/login"
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/create-account"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/users/export"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/users"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/users/:id"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/users/:id"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/users/:id/disable"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/users/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/settings/notifications"
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/settings/notifications"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/metrics/overview"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/metrics/user-analytics"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/metrics/feature-usage"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/audit-logs"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/reports"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/feedback"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/feedback/:id"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/admin/feedback/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/ai-logs"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/analytics"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/restaurant-requests"
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/restaurant-requests/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/restaurant-requests/:id/approve"
+  },
+  {
+    "method": "POST",
+    "path": "/api/admin/restaurant-requests/:id/reject"
+  },
+  {
+    "method": "POST",
+    "path": "/api/merchant/restaurant-requests"
+  },
+  {
+    "method": "GET",
+    "path": "/api/merchant/restaurant-requests"
+  },
+  {
+    "method": "GET",
+    "path": "/api/merchant/restaurant-requests/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/restaurants/approved"
+  },
+  {
+    "method": "GET",
+    "path": "/api/nearby/restaurants"
+  },
+  {
+    "method": "GET",
+    "path": "/api/nearby/geocode"
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/verify"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/test"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/send-test"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/recipients/evaluate"
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/campaigns"
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/campaigns/welcome/existing-user-draft"
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/campaigns/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/campaigns"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/campaigns/:id/start"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/campaigns/:id/retry"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/welcome"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/welcome-all"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/webhook"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/brevo/webhook"
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/daily-recommendations/status"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/daily-recommendations/config"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/daily-recommendations/trigger"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/daily-recommendations/test"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/daily-recommendations/retry"
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/daily-recommendations/preview"
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/preferences"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/email/preferences"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/daily-trigger"
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/delivery-logs"
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/unsubscribe"
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/unsubscribe"
+  },
+  {
+    "method": "GET",
+    "path": "/api"
+  }
+]

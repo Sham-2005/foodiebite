@@ -1,33 +1,28 @@
 {
-  "name": "foodiebite-appium-tests",
+  "name": "foodiebite-appium-mobile-e2e",
   "version": "1.0.0",
-  "description": "Appium E2E Automation Testing Suite for FoodieBite Mobile & Hybrid Frontend",
-  "main": "wdio.conf.js",
+  "description": "Comprehensive End-to-End Appium Mobile Automation Test Suite for FoodieBite Android Application",
+  "main": "runner.js",
   "scripts": {
-    "test": "node scripts/runMockAppiumRunner.js",
-    "test:wdio": "wdio run wdio.conf.js",
-    "test:report": "node scripts/generateAppiumExcelReport.js",
-    "report:open": "node -e \"require('child_process').execSync('start reports/FoodieBite_Appium_E2E_Test_Report.xlsx')\""
+    "test": "node runner.js",
+    "test:emulator": "node runner.js --device emulator",
+    "test:device": "node runner.js --device physical",
+    "report": "node runner.js --report-only"
   },
   "keywords": [
     "appium",
-    "webdriverio",
+    "android",
     "mobile-testing",
-    "e2e-testing",
-    "foodiebite",
     "react-native",
-    "android"
+    "foodiebite",
+    "automation",
+    "excel-report",
+    "self-healing"
   ],
-  "author": "FoodieBite Quality Assurance & Mobile Engineering Team",
+  "author": "FoodieBite Mobile QA Automation Engineering Team",
   "license": "ISC",
-  "devDependencies": {
-    "@wdio/cli": "^8.32.0",
-    "@wdio/local-runner": "^8.32.0",
-    "@wdio/mocha-framework": "^8.32.0",
-    "@wdio/spec-reporter": "^8.32.0",
-    "appium": "^2.5.1",
-    "appium-uiautomator2-driver": "^3.0.0",
-    "chai": "^4.4.1",
+  "dependencies": {
+    "dotenv": "^16.4.5",
     "exceljs": "^4.4.0"
   }
 }

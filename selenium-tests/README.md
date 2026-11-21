@@ -1,86 +1,102 @@
-# FoodieBite — Selenium WebDriver Web E2E Automation Testing Framework
+# FoodieBite Web Application — Selenium WebDriver E2E Test Suite
 
-Comprehensive **Selenium WebDriver End-to-End (E2E) Automation Testing Suite** for the FoodieBite Web Frontend (`SignInScreen`, Authentication, Session Handling, Security, Responsive Breakpoints, and Accessibility).
+Professional, production-ready End-to-End (E2E) automated testing suite built with **Selenium WebDriver (Node.js)** for the **FoodieBite Web Application**.
+
+Includes comprehensive Page Object Models (POM), multi-scenario test suites covering all 8 core application modules, automated screenshot capture on failures, and styled multi-sheet **Excel Analysis Reports** (`.xlsx`).
 
 ---
 
-## 1. Directory Structure
+## 📁 Project Structure
 
-```
+```text
 selenium-tests/
-├── package.json                          # Selenium WebDriver, Chromedriver & test runner dependencies
-├── README.md                             # Documentation & setup instructions
-├── tests/
-│   └── login-tests.js                    # Primary Selenium E2E Web Login test suite
-├── data/
-│   ├── buildSeleniumTestCases.js         # Generates 322-test matrix dataset
-│   └── testCasesData.js                  # Master dataset of 322 E2E test cases
-├── scripts/
-│   └── generateSeleniumExcelReport.js    # Compiles styled Excel workbook (3 sheets)
-└── reports/
-    └── FoodieBite_Selenium_E2E_Test_Report.xlsx # Styled Master Excel Test Report (58 KB)
+├── config/
+│   └── selenium.config.js          # Base URL, viewport sizes, timeouts, user fixtures
+├── drivers/
+│   └── driverFactory.js            # Chrome WebDriver setup with headless/headed options
+├── pages/                          # Page Object Model (POM) layer
+│   ├── BasePage.js                 # Reusable WebDriver wrappers & helpers
+│   ├── SplashOnboardingPage.js     # Splash & Onboarding slides POM
+│   ├── AuthPage.js                 # Sign In, Sign Up, & Validation POM
+│   ├── DashboardPage.js            # Home Feed, Weather, & Category Tabs POM
+│   ├── FoodSearchPage.js           # Search input, Filter chips, & Product grid POM
+│   ├── NutritionCoachPage.js       # AI Nutritionist chat interface POM
+│   ├── MedicalReportsPage.js       # Supabase medical reports & OCR upload POM
+│   ├── ProfilePage.js              # User Profile, Preferences, & Sign Out POM
+│   └── AdminDashboardPage.js       # Protected Admin Portal & Audit logs POM
+├── tests/                          # End-to-End Test Suites (32 Scenarios)
+│   ├── 01_auth_onboarding.test.js  # Authentication & onboarding flow
+│   ├── 02_dashboard_feed.test.js   # Recommendations, weather, & bottom navigation
+│   ├── 03_food_catalog_search.test.js # OpenFoodFacts search & dietary filters
+│   ├── 04_ai_nutrition_coach.test.js  # Interactive AI nutrition coaching dialog
+│   ├── 05_medical_reports.test.js  # Medical reports storage view & OCR trigger
+│   ├── 06_profile_preferences.test.js # Dietary preferences & email schedule
+│   ├── 07_admin_portal.test.js     # Protected admin route, user table & logs
+│   └── 08_responsive_crosscheck.test.js # Mobile (375x812) & Desktop (1440x900)
+├── reporters/
+│   └── excelReporter.js            # Styled 5-sheet Excel analysis report builder
+├── reports/                        # Output directory for generated reports & screenshots
+│   ├── FoodieBite_Selenium_E2E_Analysis_Report.xlsx
+│   └── screenshots/
+├── runner.js                       # Master CLI test runner
+├── package.json                    # Node.js dependencies & scripts
+└── README.md                       # This user documentation
 ```
 
 ---
 
-## 2. Test Suite Coverage (322 Granular Test Cases)
+## 🚀 Quick Start
 
-| Domain # | Functional Test Domain | Target Component | Test Count | Key Scenarios Covered |
-| :---: | :--- | :--- | :---: | :--- |
-| **01** | **Standard Authentication** | `SignInScreen` | **30** | Valid login, whitespace trimming, case-sensitivity, invalid passwords, loading spinners |
-| **02** | **Form Input Validation** | `SignInScreen` | **30** | Empty fields, RFC 5321 email regex, red borders, paste handling, length constraints |
-| **03** | **Security & Injection Defense** | `SignInScreen` | **28** | SQL injection, NoSQL object injection, XSS escaping, rate limiting, clickjacking |
-| **04** | **Password Visibility Obfuscation**| `SignInScreen` | **24** | Masking by default, eye toggle icon, caret preservation, aria-labels, touch padding |
-| **05** | **Session & Token Lifecycle** | `AuthContext` | **28** | LocalStorage JWT, hard refresh persistence, multi-tab sync, auto-logout on 401 |
-| **06** | **Role-Based Access Control** | `RouteGuard` | **26** | User -> `/home`, Admin (`sham111205s@gmail.com`) -> `/admin`, route protection |
-| **07** | **Password Reset Workflow** | `ResetModal` | **28** | Modal popup, email dispatch, single-use token validation, 15m expiry, auto-close |
-| **08** | **Google OAuth SSO** | `SignInScreen` | **24** | OAuth popup, state parameter CSRF defense, scope limitations, account linking |
-| **09** | **Responsive Layouts & Viewports** | `SignInScreen` | **28** | FHD (1920x1080), MacBook, iPad, iPhone 14 (390x844), orientation change, CLS=0 |
-| **10** | **Cross-Browser Compatibility** | `Cross-Browser` | **24** | Chrome, Firefox, Safari, Edge, Opera, Headless CI/CD, flexbox uniformity |
-| **11** | **Keyboard Accessibility & WCAG** | `SignInScreen` | **26** | Logical Tab order, focus rings, role="alert", WCAG AA contrast (14.8:1), axe-core |
-| **12** | **Network Resilience & Latency** | `SignInScreen` | **26** | Offline detection, Slow 3G throttling, HTTP 500/502/504 retries, client abort timeout |
-| 📊 | **TOTAL TEST CASES** | **All 12 Domains** | **322** | **100% Web Frontend Coverage** |
+### 1. Prerequisites
+- **Node.js**: v18.x, v20.x, or v22.x
+- **Google Chrome**: Modern version (v120+) installed on the host machine.
+- Selenium WebDriver v4+ automatically manages the required ChromeDriver binary via built-in Selenium Manager.
 
----
-
-## 3. How to Run the Tests
-
-### Quick Execution (All 322 Tests + Excel Report):
+### 2. Install Dependencies
 ```bash
-# Inside selenium-tests folder:
 cd selenium-tests
+npm install
+```
+
+### 3. Run All End-to-End Tests
+```bash
+# Run full suite in headless Chrome:
 npm test
 
-# From root directory:
-npm run test:selenium
-```
+# Run full suite in visible Chrome browser window (headed):
+npm run test:headed
 
-### Run with Mocha BDD Runner:
-```bash
-cd selenium-tests
-npm run test:mocha
-```
-
-### Regenerate Styled Excel Report:
-```bash
-npm run test:selenium:report
+# Generate or refresh Excel Analysis Report only:
+npm run report
 ```
 
 ---
 
-## 4. Generated Excel Deliverable
+## 📊 Excel Analysis Report Breakdown
 
-The test suite compiles an executive-ready Microsoft Excel workbook at:
-* [`selenium-tests/reports/FoodieBite_Selenium_E2E_Test_Report.xlsx`](file:///s:/files/food_app/selenium-tests/reports/FoodieBite_Selenium_E2E_Test_Report.xlsx)
-* [`reports/FoodieBite_Selenium_E2E_Test_Report.xlsx`](file:///s:/files/food_app/reports/FoodieBite_Selenium_E2E_Test_Report.xlsx)
+Each test execution automatically generates a styled Excel analysis workbook at:
+- `selenium-tests/reports/FoodieBite_Selenium_E2E_Analysis_Report.xlsx`
+- (Also synchronized to `Vulnerability Test Results/FoodieBite_Selenium_E2E_Analysis_Report.xlsx`)
 
-### The Workbook Contains 3 Dedicated Worksheets:
-1. **`Test Execution Summary`**:
-   - Executive KPI Scorecards: Total Tests (322), Passed (322 / 100%), Failed (0), Execution Duration (2.84 min).
-   - Domain Breakdown Table across all 12 functional areas with test counts, pass rates, and average latency.
-   - Severity & Priority Breakdown (P1-Critical: 104, P2-High: 146, P3-Medium: 68, P4-Low: 4).
-2. **`Test Case Details (322 Cases)`**:
-   - Granular execution matrix with Test ID, Category, Screen, Scenario, Preconditions, Execution Steps, Input Data, Expected Behavior, Actual Result, Status Badge (`PASS`), Severity, Automation Type, and Duration.
-3. **`Environment & Browser Specs`**:
-   - Detailed technical specifications for Selenium WebDriver v4.27, Chrome Headless v131, Chromedriver, Node v22, React Native Web 0.19, and test URLs.
+### Workbook Sheets:
+1. **Sheet 1 — Executive Dashboard**: Summary KPI scorecard with Pass/Fail counts, success rate %, total execution time, environment configuration, and overall QA verdict.
+2. **Sheet 2 — E2E Test Execution**: Detailed row-by-row log of all 32 test scenarios with Test ID, Module, Action Steps, Expected Result, Actual Result, Status (`PASS` / `FAIL`), and Execution Duration in milliseconds.
+3. **Sheet 3 — Feature Coverage Matrix**: All 8 application modules mapped against functional requirements, test scenario counts, critical path indicators, and QA sign-off status.
+4. **Sheet 4 — Performance & Latency**: Screen-by-screen render times and action latencies evaluated against industry standard SLAs.
+5. **Sheet 5 — Defect & Failure Log**: Structured issue logging with severity levels, reproduction steps, root causes, and remediation guidance.
 
+---
+
+## 🧪 Modules & Test Coverage Summary
+
+| Module | Test Suite File | Scenarios | Target Verification |
+| :--- | :--- | :---: | :--- |
+| **Authentication** | `01_auth_onboarding.test.js` | 5 | Splash timing, onboarding skip, sign in, sign up, invalid credential errors |
+| **Home Dashboard** | `02_dashboard_feed.test.js` | 4 | Food recommendations, weather widget, dietary category tabs, bottom nav |
+| **Food Search** | `03_food_catalog_search.test.js` | 4 | OpenFoodFacts queries, quick search chips, high-protein filter, text debounce |
+| **AI Nutrition Coach** | `04_ai_nutrition_coach.test.js` | 4 | Chat interface, quick diet prompts, optimistic UI bubble, thread persistence |
+| **Medical Reports** | `05_medical_reports.test.js` | 4 | Supabase storage status badge, OCR scan trigger, saved reports count |
+| **Profile & Settings** | `06_profile_preferences.test.js` | 4 | Account details, dietary preferences link, email notification schedule, sign out |
+| **Admin Portal** | `07_admin_portal.test.js` | 4 | RBAC route guard, admin KPI cards, user management table, email delivery logs |
+| **Responsive Viewports** | `08_responsive_crosscheck.test.js` | 3 | Mobile viewport (375x812), Tablet (768x1024), Desktop container centering |
+| **Total Test Suite** | **8 Test Suites** | **32** | **100% Critical Flow Coverage** |
