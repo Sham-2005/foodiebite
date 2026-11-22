@@ -344,9 +344,7 @@ export default function MedicalReportsScreen() {
 
     let finalUrl = url;
     if (typeof url === 'string' && (url.startsWith('/uploads') || url.startsWith('uploads/'))) {
-      const backendBase = (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL)
-        ? process.env.REACT_APP_API_URL.replace(/\/api\/?$/, '')
-        : 'http://localhost:5000';
+      const backendBase = BACKEND_BASE_URL;
       const cleanPath = url.startsWith('/') ? url : `/${url}`;
       finalUrl = `${backendBase}${cleanPath}`;
     }

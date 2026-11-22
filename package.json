@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "FoodieBite Monorepo",
+  "workspaces": [
+    "frontend"
+  ],
   "scripts": {
     "start": "node scripts/startApp.js",
     "start:backend": "cd backend && npm start",
@@ -22,7 +25,7 @@
     "test:appium:report": "node appium-tests/scripts/generateAppiumExcelReport.js",
     "test:selenium": "node selenium-tests/tests/login-tests.js",
     "test:selenium:report": "node selenium-tests/scripts/generateSeleniumExcelReport.js",
-    "build": "cd frontend && npm run build"
+    "build": "cd frontend && npm install --include=dev && npm run build"
   },
   "devDependencies": {
     "exceljs": "^4.4.0"

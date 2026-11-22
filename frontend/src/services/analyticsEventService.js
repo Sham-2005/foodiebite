@@ -1,3 +1,4 @@
+import { getApiUrl } from '../config/apiConfig.js';
 // ─────────────────────────────────────────────────────────────
 //  frontend/src/services/analyticsEventService.js
 //  FoodieBite Client-Side Centralized Analytics Event Tracking Service
@@ -71,7 +72,7 @@ export async function flushEventQueue() {
   eventQueue = [];
 
   try {
-    const apiUrl = (process.env.REACT_APP_API_URL || 'http://localhost:5000/api') + '/analytics/events/batch';
+    const apiUrl = getApiUrl('/analytics/events/batch');
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -34,6 +34,24 @@ parseEnvFile(rootDotenv);
 // 2. Load frontend .env (overrides root)
 parseEnvFile(frontendDotenv);
 
+// 2b. Merge system environment variables (vital for Vercel, Render, CI/CD where .env is not committed)
+if (typeof process !== 'undefined' && process.env) {
+  Object.keys(process.env).forEach(key => {
+    if (
+      key.startsWith('REACT_APP_') ||
+      key.startsWith('NEXT_PUBLIC_') ||
+      key === 'NODE_ENV' ||
+      key === 'PUBLIC_URL' ||
+      key === 'VERCEL_URL' ||
+      key === 'VERCEL_ENV'
+    ) {
+      if (process.env[key] !== undefined && (env[key] === undefined || env[key] === '')) {
+        env[key] = process.env[key];
+      }
+    }
+  });
+}
+
 // 3. Mirror NEXT_PUBLIC_ and REACT_APP_ Supabase aliases for seamless interoperability
 const resolvedSupabaseUrl =
   env.NEXT_PUBLIC_SUPABASE_URL ||
@@ -60,6 +78,39 @@ if (resolvedSupabaseKey) {
   env.REACT_APP_SUPABASE_PUBLISHABLE_KEY = resolvedSupabaseKey;
   env.NEXT_PUBLIC_SUPABASE_ANON_KEY = resolvedSupabaseKey;
   env.REACT_APP_SUPABASE_ANON_KEY = resolvedSupabaseKey;
+}
+
+// 4. Mirror API URL aliases
+const resolvedApiUrl =
+  env.NEXT_PUBLIC_API_URL ||
+  env.REACT_APP_API_URL ||
+  (process.env && process.env.NEXT_PUBLIC_API_URL) ||
+  (process.env && process.env.REACT_APP_API_URL) ||
+  '';
+
+if (resolvedApiUrl) {
+  env.NEXT_PUBLIC_API_URL = resolvedApiUrl;
+  env.REACT_APP_API_URL = resolvedApiUrl;
+}
+
+// 5. Mirror Google Web Client ID aliases
+const resolvedGoogleClientId =
+  env.NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
+  env.REACT_APP_GOOGLE_WEB_CLIENT_ID ||
+  (process.env && process.env.NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID) ||
+  (process.env && process.env.REACT_APP_GOOGLE_WEB_CLIENT_ID) ||
+  '';
+
+if (resolvedGoogleClientId) {
+  env.NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID = resolvedGoogleClientId;
+  env.REACT_APP_GOOGLE_WEB_CLIENT_ID = resolvedGoogleClientId;
+}
+
+// Enforce Render production backend in production builds if not explicitly overridden
+const isProdBuild = process.env.NODE_ENV === 'production' || process.argv.includes('production') || process.argv.includes('--mode=production');
+if (isProdBuild && (!env.REACT_APP_API_URL || env.REACT_APP_API_URL.includes('localhost'))) {
+  env.REACT_APP_API_URL = 'https://foodiebite-backend.onrender.com/api';
+  env.NEXT_PUBLIC_API_URL = 'https://foodiebite-backend.onrender.com/api';
 }
 
 const envKeys = Object.keys(env).reduce((prev, next) => {

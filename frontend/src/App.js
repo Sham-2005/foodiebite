@@ -224,6 +224,7 @@ function AppContent() {
       <Stack.Screen name="SignIn" component={SignInScreen} />
       <Stack.Screen name="SignUp" component={SignUpScreen} />
       <Stack.Screen name="AuthCallback" component={LazyAuthCallbackScreen} />
+      <Stack.Screen name="AuthCallbackAlt" component={LazyAuthCallbackScreen} />
       <Stack.Screen name="CompleteProfile" component={LazyCompleteProfileScreen} />
       <Stack.Screen name="Home" component={HomeScreen} />
       <Stack.Screen name="Admin" component={LazyProtectedAdminRoute} />
@@ -250,6 +251,9 @@ function AppContent() {
 
 const linking = {
   prefixes: [
+    ...(typeof window !== 'undefined' && window.location && window.location.origin ? [window.location.origin] : []),
+    'https://sham-2005.github.io/foodiebite',
+    'https://sham-2005.github.io',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'foodiebite://',
@@ -265,6 +269,7 @@ const linking = {
       Compare: 'compare',
       NutritionScanner: 'scanner',
       AuthCallback: 'auth/callback',
+      AuthCallbackAlt: 'auth-callback',
       CompleteProfile: 'complete-profile',
       Preferences: 'preferences',
       Favorites: 'favorites',

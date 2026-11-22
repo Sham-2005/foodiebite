@@ -47,6 +47,7 @@ import {
   updateProfile as supabaseUpdateProfileData,
 } from './supabaseProfileService.js';
 import { isSupabaseConfigured, getSupabaseClient } from '../config/supabaseClient.js';
+import { API_BASE_URL, BACKEND_BASE_URL, getApiUrl, getBackendUrl, getApiBaseUrl } from '../config/apiConfig.js';
 import {
   getRecommendations as getClientRecommendations,
   searchByQuery as searchClientFoods,
@@ -230,7 +231,7 @@ export async function apiSyncUser(userData) {
 
   // 1. Sync to backend user store / DB
   try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/user/sync`, {
+    const res = await fetch(`${API_BASE_URL}/user/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(syncPayload)
@@ -598,7 +599,7 @@ export async function apiLogin({ email, password }) {
     } catch (fbErr) {
       // If Firebase sign-in failed or user is registered via backend
       try {
-        const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/auth/login`, {
+        const res = await fetch(`${API_BASE_URL}/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: cleanEmail, password })
@@ -684,7 +685,7 @@ export async function apiGetMe() {
       const token = getToken();
       if (token) {
         try {
-          const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/auth/me`, {
+          const res = await fetch(`${API_BASE_URL}/auth/me`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           if (res.ok) {
@@ -1255,7 +1256,7 @@ export async function apiSendTestDailyEmail() {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/user/test-daily-email`, {
+    const res = await fetch(`${API_BASE_URL}/user/test-daily-email`, {
       method: 'POST',
       headers
     });
@@ -1279,7 +1280,7 @@ export async function apiVerifyEmailService() {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/email/status`, {
+  const res = await fetch(`${API_BASE_URL}/email/status`, {
     method: 'GET',
     headers
   });
@@ -1293,7 +1294,7 @@ export async function apiSendSmtpTestEmail(toEmail, subject, message) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/email/test`, {
+  const res = await fetch(`${API_BASE_URL}/email/test`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ to: toEmail, subject, message })
@@ -1322,7 +1323,7 @@ export async function apiSendWelcomeEmail(userData = null) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/email/welcome`, {
+  const res = await fetch(`${API_BASE_URL}/email/welcome`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1355,7 +1356,7 @@ export async function apiLoginWithGoogle() {
 
 export async function apiDeleteAccount() {
   const token = getToken();
-  const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+  const API_BASE = API_BASE_URL;
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -1459,7 +1460,7 @@ export async function apiForgotPassword(email) {
 
     // B. Trigger HTTPS function to log reset request and send security email
     try {
-      await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/../sendPasswordResetAlert`, {
+      await fetch(`${API_BASE_URL}/../sendPasswordResetAlert`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })
@@ -1544,7 +1545,7 @@ export async function apiTriggerTestNutritionEmail() {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/user/test-daily-email`, {
+  const res = await fetch(`${API_BASE_URL}/user/test-daily-email`, {
     method: 'POST',
     headers
   });
@@ -1691,7 +1692,7 @@ export async function apiCompleteProfile(profileData) {
 // 8. Submit Feedback service
 export async function apiSubmitFeedback({ name, email, rating, message, category = 'general' }) {
   const token = getToken();
-  const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+  const API_BASE = API_BASE_URL;
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -1713,7 +1714,7 @@ export async function apiSubmitFeedback({ name, email, rating, message, category
 
 export async function apiCompareFoods(foodA, foodB) {
   const token = getToken();
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/food/compare`, {
+  const res = await fetch(`${API_BASE_URL}/food/compare`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1728,7 +1729,7 @@ export async function apiCompareFoods(foodA, foodB) {
 
 export async function apiGetMoodRecommendations(mood) {
   const token = getToken();
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/food/mood?mood=${encodeURIComponent(mood)}`, {
+  const res = await fetch(`${API_BASE_URL}/food/mood?mood=${encodeURIComponent(mood)}`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   const data = await res.json();
@@ -1738,7 +1739,7 @@ export async function apiGetMoodRecommendations(mood) {
 
 export async function apiGetWeatherRecommendations(temp, condition) {
   const token = getToken();
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/food/weather?temp=${temp}&condition=${encodeURIComponent(condition)}`, {
+  const res = await fetch(`${API_BASE_URL}/food/weather?temp=${temp}&condition=${encodeURIComponent(condition)}`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   const data = await res.json();
@@ -1748,7 +1749,7 @@ export async function apiGetWeatherRecommendations(temp, condition) {
 
 export async function apiGetDnaRecommendations() {
   const token = getToken();
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/food/dna`, {
+  const res = await fetch(`${API_BASE_URL}/food/dna`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   const data = await res.json();
@@ -1829,7 +1830,7 @@ export async function apiSendChatMessage(threadId, message, userContext = {}) {
   // execute local AI engine directly with zero network latency:
   try {
     const isMobile = typeof Platform !== 'undefined' && Platform.OS !== 'web';
-    const isLocalhost = !(process.env.REACT_APP_API_URL) || process.env.REACT_APP_API_URL.includes('localhost');
+    const isLocalhost = API_BASE_URL.includes('localhost');
 
     if (isMobile || isLocalhost) {
       return await processLocalAiMessage(message, userContext);
@@ -1842,7 +1843,7 @@ export async function apiSendChatMessage(threadId, message, userContext = {}) {
     const controller = new AbortController();
     const data = await withTimeout(
       fetch(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/coach`,
+        `${API_BASE_URL}/coach`,
         {
           method: 'POST',
           headers: {
@@ -1874,7 +1875,7 @@ export async function apiSendChatMessage(threadId, message, userContext = {}) {
 
 export async function apiGetAnalyticsSummary(range = '7') {
   const token = getToken();
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/analytics/summary?range=${range}`, {
+  const res = await fetch(`${API_BASE_URL}/analytics/summary?range=${range}`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   const data = await res.json();
@@ -1932,7 +1933,7 @@ export async function apiLogMeal(meal) {
 export async function apiAdminGetOverviewMetrics(refresh = false) {
   if (isFirebaseConfigured) {
     const token = getToken();
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/metrics/overview?refresh=${refresh}`, {
+    const res = await fetch(`${API_BASE_URL}/admin/metrics/overview?refresh=${refresh}`, {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -1969,7 +1970,7 @@ export async function apiAdminGetUsersPaginated(params = {}) {
       }
     });
     const query = new URLSearchParams(cleanParams).toString();
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/users?${query}`, {
+    const res = await fetch(`${API_BASE_URL}/admin/users?${query}`, {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -2003,7 +2004,7 @@ export async function apiAdminExportUsersCsv(params = {}) {
       }
     });
     const query = new URLSearchParams(cleanParams).toString();
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/users/export?${query}`, {
+    const res = await fetch(`${API_BASE_URL}/admin/users/export?${query}`, {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -2032,7 +2033,7 @@ export async function apiAdminExportUsersCsv(params = {}) {
 export async function apiAdminGetUserAnalytics(range = '30d') {
   if (isFirebaseConfigured) {
     const token = getToken();
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/metrics/user-analytics?range=${range}`, {
+    const res = await fetch(`${API_BASE_URL}/admin/metrics/user-analytics?range=${range}`, {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -2058,7 +2059,7 @@ export async function apiAdminGetUserAnalytics(range = '30d') {
 export async function apiAdminGetFeatureUsage(days = 30) {
   if (isFirebaseConfigured) {
     const token = getToken();
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/metrics/feature-usage?days=${days}`, {
+    const res = await fetch(`${API_BASE_URL}/admin/metrics/feature-usage?days=${days}`, {
       method: 'GET',
       headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -2086,7 +2087,7 @@ export async function apiAdminGetFeatureUsage(days = 30) {
 export async function apiAdminGetAuditLogs(limit = 50) {
   const token = getToken();
   try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/audit-logs?limit=${limit}`, {
+    const res = await fetch(`${API_BASE_URL}/admin/audit-logs?limit=${limit}`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -2102,7 +2103,7 @@ export async function apiAdminGetAuditLogs(limit = 50) {
 // ── DEDICATED SEPARATE ADMIN AUTHENTICATION ───────────────────
 export async function apiAdminLogin(credentials) {
   try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/login`, {
+    const res = await fetch(`${API_BASE_URL}/admin/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -2135,7 +2136,7 @@ export function getAdminToken() {
 
 export async function apiAdminCreateAccount(payload) {
   try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/create-account`, {
+    const res = await fetch(`${API_BASE_URL}/admin/create-account`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -2211,7 +2212,7 @@ export async function apiAdminGetUsers() {
   const token = getAdminToken();
   let serverUsers = [];
   try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/users?limit=100`, {
+    const res = await fetch(`${API_BASE_URL}/admin/users?limit=100`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${token}`
@@ -2301,7 +2302,7 @@ export async function apiAdminGetUsers() {
 export async function apiAdminGetUserDetails(id) {
   const token = getToken();
   try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/users/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/admin/users/${id}`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -2450,7 +2451,7 @@ export async function apiAdminGetUserDetails(id) {
 export async function apiAdminUpdateUser(id, payload) {
   const token = getToken();
   try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/users/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/admin/users/${id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -2485,7 +2486,7 @@ export async function apiAdminDisableUser(id, disabled) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/users/${id}/disable`, {
+  const res = await fetch(`${API_BASE_URL}/admin/users/${id}/disable`, {
     method: 'PUT',
     headers,
     body: JSON.stringify({ disabled })
@@ -2500,7 +2501,7 @@ export async function apiAdminDeleteUser(id) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/users/${id}`, {
+  const res = await fetch(`${API_BASE_URL}/admin/users/${id}`, {
     method: 'DELETE',
     headers
   });
@@ -2514,7 +2515,7 @@ export async function apiAdminGetNotificationSettings() {
   const headers = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/settings/notifications`, {
+  const res = await fetch(`${API_BASE_URL}/admin/settings/notifications`, {
     headers
   });
   const data = await res.json();
@@ -2527,7 +2528,7 @@ export async function apiAdminUpdateNotificationSettings(settings) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/settings/notifications`, {
+  const res = await fetch(`${API_BASE_URL}/admin/settings/notifications`, {
     method: 'POST',
     headers,
     body: JSON.stringify(settings)
@@ -2553,7 +2554,7 @@ export async function apiAdminGetFeedback(params = {}) {
   if (params.limit) searchParams.append('limit', params.limit);
 
   const qStr = searchParams.toString();
-  const url = `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/feedback${qStr ? `?${qStr}` : ''}`;
+  const url = `${API_BASE_URL}/admin/feedback${qStr ? `?${qStr}` : ''}`;
   const res = await fetch(url, {
     method: 'GET',
     headers: {
@@ -2571,7 +2572,7 @@ export async function apiAdminGetFeedback(params = {}) {
 
 export async function apiAdminResolveFeedback(id, replyMessage, status = 'resolved') {
   const token = getToken();
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/feedback/${id}`, {
+  const res = await fetch(`${API_BASE_URL}/admin/feedback/${id}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -2589,7 +2590,7 @@ export async function apiAdminResolveFeedback(id, replyMessage, status = 'resolv
 
 export async function apiAdminDeleteFeedback(id) {
   const token = getToken();
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/feedback/${id}`, {
+  const res = await fetch(`${API_BASE_URL}/admin/feedback/${id}`, {
     method: 'DELETE',
     headers: {
       'Authorization': `Bearer ${token || ''}`,
@@ -2607,7 +2608,7 @@ export async function apiAdminDeleteFeedback(id) {
 export async function apiAdminGetAnalytics() {
   const token = getToken();
   try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/analytics`, {
+    const res = await fetch(`${API_BASE_URL}/admin/analytics`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -2653,7 +2654,7 @@ export async function apiAdminGetAnalytics() {
 export async function apiAdminGetRestaurantRequests(status = '') {
   const token = getToken();
   try {
-    const url = `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/restaurant-requests${status ? `?status=${status}` : ''}`;
+    const url = `${API_BASE_URL}/admin/restaurant-requests${status ? `?status=${status}` : ''}`;
     const res = await fetch(url, {
       method: 'GET',
       headers: {
@@ -2671,7 +2672,7 @@ export async function apiAdminGetRestaurantRequests(status = '') {
 
 export async function apiAdminApproveRestaurantRequest(id) {
   const token = getToken();
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/restaurant-requests/${id}/approve`, {
+  const res = await fetch(`${API_BASE_URL}/admin/restaurant-requests/${id}/approve`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -2686,7 +2687,7 @@ export async function apiAdminApproveRestaurantRequest(id) {
 
 export async function apiAdminRejectRestaurantRequest(id, reason = 'Did not meet listing criteria') {
   const token = getToken();
-  const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/restaurant-requests/${id}/reject`, {
+  const res = await fetch(`${API_BASE_URL}/admin/restaurant-requests/${id}/reject`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -2707,7 +2708,7 @@ export async function apiAdminRejectRestaurantRequest(id, reason = 'Did not meet
 //  LocalStorage mock fallback for offline / demo mode.
 // ═════════════════════════════════════════════════════════════
 
-const MEDICAL_API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+const MEDICAL_API_BASE = API_BASE_URL;
 
 // ── Upload medical report ────────────────────────────────────
 export async function apiUploadMedicalReport(file, notes = '', reportName = '') {
@@ -2963,7 +2964,7 @@ export async function apiGetNearbyRestaurants({ lat, lng, radius, query, cuisine
     if (budget) queryParams.append('budget', budget);
     if (maxResults !== undefined && maxResults !== null) queryParams.append('maxResults', maxResults);
 
-    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+    const baseUrl = API_BASE_URL;
     const res = await fetch(`${baseUrl}/nearby/restaurants?${queryParams.toString()}`, {
       headers: {
         'Authorization': `Bearer ${token}`
@@ -3171,7 +3172,7 @@ export async function apiGeocodeAddress(query) {
     }
     if (!token) token = 'mock_guest_token_dev_2026';
 
-    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+    const baseUrl = API_BASE_URL;
     const res = await fetch(`${baseUrl}/nearby/geocode?q=${encodeURIComponent(query)}`, {
       headers: {
         'Authorization': `Bearer ${token}`
@@ -3213,7 +3214,7 @@ function getAdminAuthHeaders() {
   };
 }
 
-const ANALYTICS_BASE = `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/analytics`;
+const ANALYTICS_BASE = `${API_BASE_URL}/analytics`;
 
 /**
  * Fetch Executive Intelligence Overview KPIs
@@ -3434,7 +3435,7 @@ export async function apiGetExperimentResults(id) {
 // ─────────────────────────────────────────────────────────────
 //  BREVO EMAIL SERVICE & CAMPAIGN MANAGEMENT APIS
 // ─────────────────────────────────────────────────────────────
-const EMAIL_API_BASE = `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/email`;
+const EMAIL_API_BASE = `${API_BASE_URL}/email`;
 
 /**
  * Fetch live Brevo account quota, sender statuses, and configuration
@@ -3668,7 +3669,7 @@ export async function apiGetDailyRecommendationsPreview(params = {}) {
 export async function apiAdminUpdateFeedbackStatus(id, { status, internalNotes, replyMessage }) {
   const token = getToken();
   try {
-    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/admin/feedback/${id}`, {
+    const res = await fetch(`${API_BASE_URL}/admin/feedback/${id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',

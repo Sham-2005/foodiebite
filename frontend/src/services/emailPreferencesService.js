@@ -6,8 +6,9 @@
 // ─────────────────────────────────────────────────────────────
 
 import { getSupabaseClient, isSupabaseConfigured, getSupabaseInitError } from '../config/supabaseClient.js';
+import { API_BASE_URL } from '../config/apiConfig.js';
 
-const API_BASE = (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL) || 'http://localhost:5000/api';
+const API_BASE = API_BASE_URL;
 
 async function getAuthHeader() {
   const client = getSupabaseClient();

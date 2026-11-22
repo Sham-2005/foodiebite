@@ -33,22 +33,53 @@ app.use(requestCorrelation);
 
 // ── Security middlewares ──────────────────────────────
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-const allowedOrigins = new Set([
-  process.env.CLIENT_URL || 'http://localhost:3000',
+const standardOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
-]);
+  'https://sham-2005.github.io',
+  'https://sham-2005.github.io/foodiebite',
+  'https://foodiebite-backend.onrender.com',
+  'capacitor://localhost',
+  'ionic://localhost',
+  'http://localhost'
+];
+
+if (process.env.CLIENT_URL) {
+  standardOrigins.push(process.env.CLIENT_URL.trim().replace(/\/+$/, ''));
+}
+
+const allowedOrigins = new Set(standardOrigins);
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin)) {
+    // Mobile apps, server-to-server, curl, Postman send no Origin header
+    if (!origin) {
       callback(null, true);
       return;
     }
-    callback(new Error(`CORS blocked origin: ${origin}`));
+
+    const cleanOrigin = origin.trim().replace(/\/+$/, '');
+
+    // Direct match in whitelist or matching domain
+    if (
+      allowedOrigins.has(cleanOrigin) ||
+      cleanOrigin === 'https://sham-2005.github.io' ||
+      cleanOrigin.endsWith('.github.io') ||
+      cleanOrigin.endsWith('.onrender.com') ||
+      cleanOrigin.endsWith('.vercel.app') ||
+      cleanOrigin.includes('.vercel.app') ||
+      cleanOrigin.startsWith('http://localhost:') ||
+      cleanOrigin.startsWith('http://127.0.0.1:')
+    ) {
+      callback(null, true);
+      return;
+    }
+
+    callback(null, false);
   },
   credentials: true,
   methods:     ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-correlation-id'],
 }));
 
 // ── Rate limiting ─────────────────────────────────────

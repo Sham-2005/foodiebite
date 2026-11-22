@@ -1,3 +1,4 @@
+import { BACKEND_BASE_URL } from '../config/apiConfig.js';
 // ─────────────────────────────────────────────────────────────
 //  src/services/foodHelpers.js
 //  Centralized Image Resolution, Nutri-Score Derivation,
@@ -117,7 +118,7 @@ export function resolveFoodImage(food) {
       resolved = trimmed;
     } else if (trimmed.startsWith('/uploads')) {
       // Relative API upload path
-      const apiOrigin = (process.env.REACT_APP_API_URL || 'http://localhost:5000/api').replace(/\/api\/?$/, '');
+      const apiOrigin = BACKEND_BASE_URL;
       resolved = `${apiOrigin}${trimmed}`;
     } else if (!trimmed.includes('/') && trimmed.length > 4) {
       // Cloudinary public ID

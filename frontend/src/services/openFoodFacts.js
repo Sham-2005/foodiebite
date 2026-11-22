@@ -8,6 +8,7 @@ import { FALLBACK_FOODS } from '../data/fallbackFoods.js';
 import { resolveFoodImage, resolveFoodGrade } from './foodHelpers.js';
 import { normalizeFoodName, normalizeFoodItem, normalizeFoodList, deduplicateFoods } from './foodNameNormalizer.js';
 import { getItemSync } from './storage.js';
+import { getApiUrl } from '../config/apiConfig.js';
 
 const BASE = 'https://world.openfoodfacts.org';
 
@@ -155,7 +156,7 @@ export async function searchFoods(term, pageSize = 20, countryCode = 'in') {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`http://localhost:5000/api/foods/search?q=${encodeURIComponent(term)}&pageSize=${pageSize}`, {
+    const res = await fetch(getApiUrl(`/foods/search?q=${encodeURIComponent(term)}&pageSize=${pageSize}`), {
       headers
     });
     const data = await res.json();
@@ -183,7 +184,7 @@ export async function getProductById(barcode) {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`http://localhost:5000/api/foods/${barcode}`, {
+    const res = await fetch(getApiUrl(`/foods/${barcode}`), {
       headers
     });
     const data = await res.json();
@@ -432,7 +433,7 @@ export async function getRecommendations(preferences, count = 20) {
     if (preferences?.weather) queryParams.append('weather', typeof preferences.weather === 'object' ? (preferences.weather.description || '') : String(preferences.weather));
     if (preferences?.mood) queryParams.append('mood', String(preferences.mood));
 
-    const res = await fetch(`http://localhost:5000/api/foods/recommendations?${queryParams.toString()}`, {
+    const res = await fetch(getApiUrl(`/foods/recommendations?${queryParams.toString()}`), {
       headers
     });
     const data = await res.json();
@@ -473,7 +474,7 @@ export async function searchByQuery(query, preferences, count = 20) {
       queryParams.append('healthGoals', Array.isArray(preferences.healthGoals) ? preferences.healthGoals.join(',') : String(preferences.healthGoals));
     }
 
-    const res = await fetch(`http://localhost:5000/api/foods/search?${queryParams.toString()}`, {
+    const res = await fetch(getApiUrl(`/foods/search?${queryParams.toString()}`), {
       headers
     });
     const data = await res.json();
