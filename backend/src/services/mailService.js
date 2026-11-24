@@ -57,6 +57,8 @@ async function sendEmail({ to, subject, html, text, from }) {
     throw error;
   }
 
+  let lastProviderError = null;
+
   // 1. Primary Engine: Official Brevo REST API v3
   if (brevoApiKey) {
     try {
@@ -77,10 +79,8 @@ async function sendEmail({ to, subject, html, text, from }) {
         timestamp: res.timestamp
       };
     } catch (brevoErr) {
-      console.warn(`⚠️ [MailService] Brevo API send failed (${brevoErr.message}). Checking Resend fallback...`);
-      if (!process.env.RESEND_API_KEY) {
-        throw brevoErr;
-      }
+      lastProviderError = brevoErr;
+      console.warn(`⚠️ [MailService] Brevo API send failed (${brevoErr.message}). Checking fallbacks...`);
     }
   }
 
@@ -89,7 +89,7 @@ async function sendEmail({ to, subject, html, text, from }) {
   const sender = from || process.env.RESEND_FROM || DEFAULT_SENDER;
   const mailSubject = subject || 'Notification from FoodieBite';
 
-  if (resendApiKey) {
+  if (resendApiKey && !resendApiKey.includes('your_')) {
     console.log(`📨 [MailService] Sending email via Resend fallback HTTPS API:`);
     console.log(`   From: ${sender}`);
     console.log(`   To:   ${cleanTo}`);
@@ -110,6 +110,7 @@ async function sendEmail({ to, subject, html, text, from }) {
       const { data, error } = await resend.emails.send(payload);
 
       if (error) {
+        lastProviderError = new Error(error.message || 'Resend API dispatch error');
         console.warn(`⚠️ [MailService] Resend API error (${error.message}). Checking SMTP fallback...`);
       } else {
         console.log(`✅ [MailService] Resend accepted email! ID: ${data?.id}`);
@@ -123,6 +124,7 @@ async function sendEmail({ to, subject, html, text, from }) {
         };
       }
     } catch (resendErr) {
+      lastProviderError = resendErr;
       console.warn(`⚠️ [MailService] Resend dispatch failed (${resendErr.message}). Checking SMTP fallback...`);
     }
   }
@@ -135,6 +137,9 @@ async function sendEmail({ to, subject, html, text, from }) {
         host: process.env.SMTP_HOST || 'smtp.gmail.com',
         port: parseInt(process.env.SMTP_PORT, 10) || 587,
         secure: parseInt(process.env.SMTP_PORT, 10) === 465,
+        connectionTimeout: 5000,
+        greetingTimeout: 5000,
+        socketTimeout: 5000,
         auth: {
           user: process.env.SMTP_USER,
           pass: process.env.SMTP_PASS
@@ -156,8 +161,16 @@ async function sendEmail({ to, subject, html, text, from }) {
         timestamp: new Date().toISOString()
       };
     } catch (smtpErr) {
-      console.warn(`⚠️ [MailService] SMTP fallback failed:`, smtpErr.message);
+      lastProviderError = smtpErr;
+      console.warn(`⚠️ [MailService] SMTP fallback failed (${smtpErr.message}).`);
     }
+  }
+
+  if (lastProviderError) {
+    const error = new Error(lastProviderError.message || 'All email dispatch providers failed.');
+    error.code = lastProviderError.code || 'EMAIL_DISPATCH_FAILED';
+    error.statusCode = lastProviderError.statusCode || 500;
+    throw error;
   }
 
   const error = new Error('No working email provider configured. Please configure BREVO_API_KEY in backend/.env.');
