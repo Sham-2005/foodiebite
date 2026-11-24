@@ -33,7 +33,7 @@ class OllamaService {
    * Get current base URL
    */
   getBaseUrl() {
-    return (process.env.OLLAMA_BASE_URL || this.baseUrl || DEFAULT_OLLAMA_HOST).replace(/\/+$/, '');
+    return (this.baseUrl || process.env.OLLAMA_BASE_URL || DEFAULT_OLLAMA_HOST).replace(/\/+$/, '');
   }
 
   /**
@@ -42,6 +42,8 @@ class OllamaService {
   setBaseUrl(url) {
     if (url && typeof url === 'string') {
       this.baseUrl = url.replace(/\/+$/, '');
+    } else {
+      this.baseUrl = process.env.OLLAMA_BASE_URL || DEFAULT_OLLAMA_HOST;
     }
   }
 
