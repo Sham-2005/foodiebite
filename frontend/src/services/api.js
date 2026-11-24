@@ -1838,18 +1838,7 @@ function withTimeout(promise, ms) {
 }
 
 export async function apiSendChatMessage(threadId, message, userContext = {}) {
-  // If running on mobile (Android/iOS) or offline or without custom remote backend,
-  // execute local AI engine directly with zero network latency:
-  try {
-    const isMobile = typeof Platform !== 'undefined' && Platform.OS !== 'web';
-    const isLocalhost = API_BASE_URL.includes('localhost');
-
-    if (isMobile || isLocalhost) {
-      return await processLocalAiMessage(message, userContext);
-    }
-  } catch (_) {}
-
-  // Attempt remote /coach if configured, falling back seamlessly to local engine:
+  // 1. Attempt backend /coach endpoint (runs Ollama AI model + Food Database Grounding)
   try {
     let token = getToken() || 'mock_guest_token_dev_2026';
     const controller = new AbortController();
@@ -1872,7 +1861,7 @@ export async function apiSendChatMessage(threadId, message, userContext = {}) {
         }
         return json;
       }),
-      8000
+      25000 // 25s timeout to allow local LLM inference
     );
 
     if (data && data.reply) return data;
@@ -1880,6 +1869,56 @@ export async function apiSendChatMessage(threadId, message, userContext = {}) {
   } catch (err) {
     console.warn('apiSendChatMessage backend unreachable, falling back to local AI engine:', err.message);
     return await processLocalAiMessage(message, userContext);
+  }
+}
+
+/**
+ * Retrieves AI Coach status (Ollama connection & active model)
+ */
+export async function apiGetCoachAIStatus() {
+  try {
+    const res = await withTimeout(
+      fetch(`${API_BASE_URL}/coach/status`),
+      4000
+    );
+    return await res.json();
+  } catch (err) {
+    return {
+      success: false,
+      activeProvider: 'offline_fallback',
+      ollama: { connected: false, status: 'Ollama Offline' }
+    };
+  }
+}
+
+/**
+ * Retrieves installed models from Ollama via backend
+ */
+export async function apiGetInstalledOllamaModels() {
+  try {
+    const res = await withTimeout(
+      fetch(`${API_BASE_URL}/coach/models`),
+      4000
+    );
+    return await res.json();
+  } catch (err) {
+    return { success: false, models: [] };
+  }
+}
+
+/**
+ * Sets selected model on Ollama backend
+ */
+export async function apiSetCoachOllamaModel(model) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/coach/model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model })
+    });
+    return await res.json();
+  } catch (err) {
+    return { success: false, message: err.message };
   }
 }
 

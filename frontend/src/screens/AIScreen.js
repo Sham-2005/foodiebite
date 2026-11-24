@@ -23,7 +23,7 @@ import { Bot, Send, Sparkles, Trash2, User, Plus } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import AppLayout from '../components/AppLayout';
 import { C } from '../components/UI';
-import { apiSendChatMessage } from '../services/api';
+import { apiSendChatMessage, apiGetCoachAIStatus } from '../services/api';
 import { getItemSync, setItemSync, getJSONSync } from '../services/storage.js';
 
 const QUICK_PROMPTS = [
@@ -67,6 +67,17 @@ export default function AIScreen() {
   const [messages, setMessages] = useState([]);
   const [optimisticMsgs, setOptimisticMsgs] = useState([]);
   const [isTyping, setIsTyping] = useState(false);
+  const [aiStatus, setAiStatus] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    apiGetCoachAIStatus().then(res => {
+      if (active && res) {
+        setAiStatus(res);
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const userId = user?.uid || user?.id || 'guest_user';
 
@@ -313,7 +324,20 @@ export default function AIScreen() {
           </View>
           <View>
             <Text style={styles.headerTitle}>FoodieBite AI</Text>
-            <Text style={styles.headerSubtitle}>Offline Nutrition Coach</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+              <View style={{
+                width: 7,
+                height: 7,
+                borderRadius: 4,
+                backgroundColor: aiStatus?.ollama?.connected ? '#10B981' : '#F59E0B',
+                marginRight: 6
+              }} />
+              <Text style={styles.headerSubtitle}>
+                {aiStatus?.ollama?.connected
+                  ? `Ollama: ${aiStatus.model || 'qwen2.5'} (Local)`
+                  : 'FoodieBite Local Intelligence'}
+              </Text>
+            </View>
           </View>
         </View>
 

@@ -470,23 +470,149 @@ exports.handleChatMessage = async (req, res, next) => {
   const responsePayload = {
     success: isSuccess,
     source: responseSource,
+    provider: aiResult.provider || responseSource,
+    model: aiResult.model || 'foodiebite-ai-v1',
     reply: replyText,
     text: replyText,
     type,
     options,
+    recommendations: aiResult.recommendations || [],
     sessionId,
     threadId: actualThreadId,
     persisted,
     nearbyIntent: aiResult.nearbyIntent,
-    _timing: { totalMs },
+    _timing: { totalMs, ...(aiResult.timing || {}) },
     _debug: {
-      provider: 'foodiebite_local_engine',
-      model: 'foodiebite-ai-v1',
+      provider: aiResult.provider || 'foodiebite_local_engine',
+      model: aiResult.model || 'foodiebite-ai-v1',
       userContextFields: Object.keys(userContext)
     }
   };
 
   console.log(`[COACH] response sent +${Date.now() - reqStart}ms`);
   return res.status(200).json(responsePayload);
+};
+
+// ── OLLAMA & AI MODEL MANAGEMENT CONTROLLERS ─────────────────
+
+const ollamaService = require('../services/ollamaService');
+const { getAIStatus } = require('../services/foodieBiteAIService');
+
+/**
+ * GET /api/coach/status
+ * Returns comprehensive AI status (Ollama connection, model availability, active provider)
+ */
+exports.getAIStatusHandler = async (req, res) => {
+  try {
+    const status = await getAIStatus();
+    return res.status(200).json({ success: true, ...status });
+  } catch (err) {
+    console.error('❌ Error getting AI status:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /api/coach/models
+ * Retrieves installed models from local Ollama
+ */
+exports.getInstalledModelsHandler = async (req, res) => {
+  try {
+    const models = await ollamaService.getInstalledModels();
+    return res.status(200).json({
+      success: true,
+      selectedModel: ollamaService.getSelectedModel(),
+      models,
+      count: models.length
+    });
+  } catch (err) {
+    console.error('❌ Error getting installed models:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * POST /api/coach/model
+ * Switches currently selected Ollama model
+ * Body: { model: string }
+ */
+exports.setSelectedModelHandler = async (req, res) => {
+  try {
+    const { model } = req.body || {};
+    if (!model || typeof model !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid model name is required (e.g., qwen2.5:0.5b, llama3.2:1b)'
+      });
+    }
+
+    ollamaService.setSelectedModel(model);
+    const connectionStatus = await ollamaService.checkConnection(2000);
+
+    return res.status(200).json({
+      success: true,
+      message: `Selected model switched to "${model}".`,
+      selectedModel: model,
+      connectionStatus
+    });
+  } catch (err) {
+    console.error('❌ Error setting model:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * POST /api/coach/pull
+ * Downloads a model to local Ollama in the background
+ * Body: { model: string }
+ */
+exports.pullModelHandler = async (req, res) => {
+  try {
+    const { model } = req.body || {};
+    if (!model || typeof model !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid model name is required to pull (e.g., qwen2.5:0.5b)'
+      });
+    }
+
+    const pullResult = await ollamaService.pullModel(model);
+    return res.status(200).json({
+      success: true,
+      message: `Model "${model}" pulled successfully.`,
+      result: pullResult
+    });
+  } catch (err) {
+    console.error('❌ Error pulling model:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * POST /api/coach/test
+ * Tests local Ollama inference with a lightweight prompt
+ */
+exports.testAIConnectionHandler = async (req, res) => {
+  try {
+    const testPrompt = req.body?.prompt || 'What is a healthy breakfast under 300 calories? Answer in one sentence.';
+    const result = await ollamaService.chat({
+      messages: [{ role: 'user', content: testPrompt }],
+      options: { num_predict: 120 }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Ollama test completion successful!',
+      model: result.model,
+      reply: result.reply,
+      latencyMs: result.latencyMs
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: err.message || 'Ollama test failed',
+      code: err.code || 'OLLAMA_ERROR'
+    });
+  }
 };
 
