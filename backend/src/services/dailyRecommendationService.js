@@ -74,6 +74,32 @@ async function safeFirestore(promise, timeoutMs = 500) {
  */
 async function getEligibleDailyRecipients(runId = getDailyRunId()) {
   const allUsers = [...userStore.getAllUsers()];
+
+  // Merge Supabase profiles if reachable
+  try {
+    const { getSupabaseAdmin, getSupabaseClient } = require('../config/supabase');
+    const sb = getSupabaseAdmin() || getSupabaseClient();
+    if (sb) {
+      const { data: sbProfiles } = await sb.from('profiles').select('*');
+      if (Array.isArray(sbProfiles)) {
+        sbProfiles.forEach(p => {
+          if (p.email && !allUsers.some(u => (u.email || '').toLowerCase() === p.email.toLowerCase())) {
+            allUsers.push({
+              id: p.id,
+              uid: p.id,
+              name: p.name || p.full_name || p.email.split('@')[0],
+              email: p.email.toLowerCase(),
+              dietType: p.diet_type || 'Vegetarian',
+              preferences: p.preferences || {},
+              accountStatus: p.account_status || 'active',
+              disabled: Boolean(p.disabled)
+            });
+          }
+        });
+      }
+    }
+  } catch (_) {}
+
   const db = getFirestoreDb();
 
   // Merge Firestore users if reachable

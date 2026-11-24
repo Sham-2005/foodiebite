@@ -343,26 +343,63 @@ router.post('/welcome', emailRateLimiter, async (req, res) => {
   try {
     let user = null;
 
-    // 1. Try bearer token first if present
-    if (req.headers.authorization) {
-      await new Promise((resolve) => {
-        protect(req, res, () => {
-          user = req.user;
-          resolve();
-        });
-      });
-      if (res.headersSent) return;
+    // 1. Try bearer token first if present (gracefully - do NOT abort with 401 if expired or unverified)
+    if (req.headers && req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      const token = req.headers.authorization.substring(7).trim();
+      if (token) {
+        try {
+          const authMiddleware = require('../middleware/authMiddleware');
+          let decoded = null;
+          if (typeof authMiddleware.verifySupabaseToken === 'function') {
+            decoded = await authMiddleware.verifySupabaseToken(token);
+          }
+          if (!decoded && typeof authMiddleware.verifyLocalToken === 'function') {
+            decoded = authMiddleware.verifyLocalToken(token);
+          }
+          if (decoded && decoded.email) {
+            user = {
+              id: decoded.uid || decoded.id,
+              uid: decoded.uid || decoded.id,
+              email: decoded.email.trim().toLowerCase(),
+              name: decoded.name || '',
+              role: decoded.role || 'user'
+            };
+          }
+        } catch (_) {
+          // Token verification failed or expired - smoothly fall back to request body
+        }
+      }
     }
 
-    // 2. Fall back to user passed in request body
-    if (!user && req.body && req.body.user && req.body.user.email) {
-      user = req.body.user;
+    // 2. Fall back to user passed in request body (e.g. freshly registered user before session issue)
+    if (req.body && req.body.user && req.body.user.email) {
+      const bodyUser = req.body.user;
+      const cleanBodyEmail = String(bodyUser.email).trim().toLowerCase();
+      // Use body user if no authenticated user, or if matching, or if user is admin
+      if (!user || user.role === 'admin' || user.email === cleanBodyEmail) {
+        user = {
+          ...(user || {}),
+          ...bodyUser,
+          email: cleanBodyEmail,
+          name: (bodyUser.name || (user && user.name) || cleanBodyEmail.split('@')[0]).trim(),
+          dietType: bodyUser.dietType || (user && user.dietType) || 'Vegetarian'
+        };
+      }
     }
 
     if (!user || !user.email) {
       return res.status(400).json({
         success: false,
         message: 'Valid user email required for welcome email'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(user.email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email address format'
       });
     }
 

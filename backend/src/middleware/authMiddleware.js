@@ -300,6 +300,8 @@ exports.requireAdmin = (req, res, next) => {
 };
 
 exports.verifyAdmin = exports.requireAdmin;
+exports.verifySupabaseToken = verifySupabaseToken;
+exports.verifyLocalToken = verifyLocalToken;
 
 // ── requireRole helper ───────────────────────────────────────
 exports.requireRole = (...roles) => {

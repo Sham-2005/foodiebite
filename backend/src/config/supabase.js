@@ -27,7 +27,8 @@ const supabaseKey = process.env.SUPABASE_ANON_KEY ||
   process.env.REACT_APP_SUPABASE_PUBLISHABLE_KEY ||
   '';
 
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || null;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  (process.env.SUPABASE_KEY && process.env.SUPABASE_KEY.startsWith('eyJ') && process.env.SUPABASE_KEY.length > 100 ? process.env.SUPABASE_KEY : null);
 
 const isSupabaseConfigured = Boolean(
   supabaseUrl &&

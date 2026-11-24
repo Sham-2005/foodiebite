@@ -59,8 +59,11 @@ Configured securely in the Render Environment Dashboard:
 | `JWT_EXPIRE` | `7d` | Standard | Token duration |
 | `SUPABASE_URL` | `https://wzhxalmixfeqszgwqeqr.supabase.co` | Standard | Backend Supabase client |
 | `SUPABASE_KEY` | *(Supabase Service Role Key)* | **Critical Secret** | Admin database operations & user sync |
-| `RESEND_API_KEY`| `re_your_resend_api_key_here` | Secret | Transactional & daily recommendation emails |
-| `RESEND_FROM` | `FoodieBite <onboarding@resend.dev>` | Standard | Sender identity |
+| `BREVO_API_KEY`| `xkeysib_your_brevo_api_key_here` | **Primary Secret** | Primary transactional & daily recommendation email engine |
+| `BREVO_SENDER_EMAIL` | `foodiebite881@gmail.com` | Standard | Verified Brevo sender address |
+| `BREVO_SENDER_NAME` | `FoodieBite` | Standard | Sender display name |
+| `RESEND_API_KEY`| `re_your_resend_api_key_here` | Secret | Secondary fallback transactional email API |
+| `RESEND_FROM` | `FoodieBite <onboarding@resend.dev>` | Standard | Secondary fallback sender |
 
 ---
 

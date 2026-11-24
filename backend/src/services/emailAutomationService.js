@@ -24,6 +24,50 @@ const resend = resendApiKey ? new Resend(resendApiKey) : null;
 const SENDER_ADDRESS = process.env.RESEND_FROM || 'FoodieBite <onboarding@resend.dev>';
 const CLIENT_APP_URL = process.env.CLIENT_URL || 'http://localhost:3000';
 
+// In-memory idempotency caches to prevent duplicate deliveries across offline/restarted states
+const inMemoryWelcomeSent = new Set();
+const inMemoryDailySent = new Set();
+
+/**
+ * Returns diet-specific starter foods for the welcome email
+ */
+function getStarterFoodsForDiet(dietType = 'Vegetarian') {
+  const dt = String(dietType || '').toLowerCase();
+  if (dt.includes('vegan')) {
+    return [
+      { name: 'Spiced Chickpea & Avocado Bowl', mealType: 'breakfast', category: 'Plant-Based Protein & Healthy Fats', calories: 310 },
+      { name: 'Tofu & Spinach Quinoa with Roasted Veggies', mealType: 'lunch', category: 'Complete Plant Amino Acids', calories: 430 },
+      { name: 'Warm Yellow Moong Dal Soup with Sautéed Greens', mealType: 'dinner', category: 'Light & Nutrient Dense', calories: 290 }
+    ];
+  }
+  if (dt.includes('non') || dt.includes('meat') || dt.includes('chicken') || dt.includes('egg')) {
+    return [
+      { name: 'Spinach & Egg White Scramble on Sourdough', mealType: 'breakfast', category: 'Lean High-Protein', calories: 320 },
+      { name: 'Grilled Herb Chicken Bowl with Brown Rice & Broccoli', mealType: 'lunch', category: 'Lean Protein & Complex Carbs', calories: 490 },
+      { name: 'Steamed Fish or Lemon Pepper Chicken with Roasted Greens', mealType: 'dinner', category: 'Clean Protein', calories: 360 }
+    ];
+  }
+  if (dt.includes('keto')) {
+    return [
+      { name: 'Avocado & Herb Paneer Salad with Roasted Seeds', mealType: 'breakfast', category: 'High Healthy Fat & Low Carb', calories: 340 },
+      { name: 'Grilled Paneer or Chicken Skewers with Mint Dip', mealType: 'lunch', category: 'Ketogenic Nutrition', calories: 420 },
+      { name: 'Zucchini Noodle Bowl with Creamy Almond Pesto', mealType: 'dinner', category: 'Low-Glycemic & Light', calories: 300 }
+    ];
+  }
+  if (dt.includes('diabetic')) {
+    return [
+      { name: 'Steel-Cut Oats with Cinnamon, Chia & Walnuts', mealType: 'breakfast', category: 'Low-GI & Soluble Fiber', calories: 280 },
+      { name: 'Methi Moong Dal with Multi-Grain Roti & Cucumber Salad', mealType: 'lunch', category: 'Blood Sugar Stabilizing', calories: 410 },
+      { name: 'Steamed Sprouted Salad with Roasted Flaxseeds', mealType: 'dinner', category: 'Digestive & Low Glycemic', calories: 270 }
+    ];
+  }
+  return [
+    { name: 'Steamed Rava Idli with Coconut Mint Chutney', mealType: 'breakfast', category: 'Fermented Goodness & Soluble Fiber', calories: 290 },
+    { name: 'Paneer & Spinach Quinoa Bowl', mealType: 'lunch', category: 'Nutrient Dense & Satiating', calories: 440 },
+    { name: 'Warm Yellow Moong Dal with Roasted Veggies', mealType: 'dinner', category: 'Light, Restorative & Comforting', calories: 330 }
+  ];
+}
+
 /**
  * Helper to obtain active Supabase client with admin fallback
  */
@@ -86,7 +130,7 @@ function getLocalTimeInfo(timezone = 'Asia/Kolkata', date = new Date()) {
  * Assembles professional, responsive Welcome Email HTML & Plain Text
  */
 function buildWelcomeEmailContent({ userName, dietType, weather, season, recommendedFoods, clientAppUrl }) {
-  const subject = 'Welcome to FoodieBite! Your personalized food journey begins.';
+  const subject = 'Welcome to FoodieBite! 🍽️';
   const name = escapeHtml(userName || 'Food Explorer');
   const clientUrl = clientAppUrl || CLIENT_APP_URL;
   const diet = escapeHtml(dietType || 'Balanced');
@@ -111,11 +155,7 @@ function buildWelcomeEmailContent({ userName, dietType, weather, season, recomme
 
   const foods = Array.isArray(recommendedFoods) && recommendedFoods.length > 0
     ? recommendedFoods.slice(0, 3)
-    : [
-        { name: 'Steamed Rava Idli with Coconut Chutney', mealType: 'breakfast', category: 'High Fiber, Fermented Goodness', calories: 290 },
-        { name: 'Paneer & Spinach Quinoa Bowl', mealType: 'lunch', category: 'Nutrient Dense', calories: 440 },
-        { name: 'Warm Yellow Moong Dal with Roasted Veggies', mealType: 'dinner', category: 'Light & Comforting', calories: 330 }
-      ];
+    : getStarterFoodsForDiet(dietType);
 
   const foodCardsHtml = foods.map(f => `
     <div style="background-color: #161b26; border: 1px solid #283042; border-radius: 10px; padding: 14px 18px; margin-bottom: 12px;">
@@ -242,17 +282,40 @@ To manage your email preferences or delivery time, visit: ${clientUrl}/profile
 }
 
 /**
- * Dispatches an email using primary provider (Resend HTTPS API),
- * falling back seamlessly to secondary provider (Brevo REST API v3 / SMTP)
- * if Resend is rejected due to unverified domains (HTTP 403/422) or network failure.
+ * Dispatches an email using prioritized multi-provider architecture:
+ *   1. Primary Engine: Official Brevo REST API v3 (verified sender foodiebite881@gmail.com, free tier 300/day)
+ *   2. Secondary Fallback: Resend HTTPS API (fallback if Brevo API key missing or unreachable)
+ *   3. Tertiary Fallback: SMTP via mailService (fallback if both REST APIs are unavailable)
  */
 async function dispatchEmailWithProviderFallback({ to, subject, html, text, userName }) {
-  let providerUsed = 'resend';
+  let providerUsed = 'brevo';
   let messageId = null;
   let lastError = null;
 
-  // 1. Primary: Resend HTTPS API
-  if (resend) {
+  // 1. Primary Engine: Official Brevo REST API v3
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const brevoService = require('./brevoService');
+      const brevoRes = await brevoService.sendTransactionalEmail({
+        to,
+        toName: userName || '',
+        subject,
+        html,
+        text
+      });
+      if (brevoRes && brevoRes.messageId) {
+        messageId = brevoRes.messageId;
+        providerUsed = 'brevo';
+        console.log(`✅ [EmailAutomation] Email successfully delivered via primary provider Brevo to ${to} (ID: ${messageId})`);
+      }
+    } catch (brevoErr) {
+      lastError = brevoErr;
+      console.warn(`⚠️ [EmailAutomation] Primary provider Brevo failed for ${to} (${brevoErr.message}). Engaging secondary fallback provider...`);
+    }
+  }
+
+  // 2. Secondary Fallback: Resend HTTPS API
+  if (!messageId && resend) {
     try {
       const resendResult = await resend.emails.send({
         from: SENDER_ADDRESS,
@@ -268,33 +331,12 @@ async function dispatchEmailWithProviderFallback({ to, subject, html, text, user
       messageId = resendResult.data?.id || null;
       if (messageId) {
         providerUsed = 'resend';
+        lastError = null;
+        console.log(`✅ [EmailAutomation] Email successfully delivered via secondary provider Resend to ${to} (ID: ${messageId})`);
       }
     } catch (resendErr) {
       lastError = resendErr;
-      console.warn(`⚠️ [EmailAutomation] Primary provider Resend rejected dispatch to ${to} (${resendErr.message}). Engaging secondary fallback provider...`);
-    }
-  }
-
-  // 2. Secondary Fallback: Brevo REST API v3
-  if (!messageId && process.env.BREVO_API_KEY) {
-    try {
-      const brevoService = require('./brevoService');
-      const brevoRes = await brevoService.sendTransactionalEmail({
-        to,
-        toName: userName || '',
-        subject,
-        html,
-        text
-      });
-      if (brevoRes && brevoRes.messageId) {
-        messageId = brevoRes.messageId;
-        providerUsed = 'brevo';
-        lastError = null;
-        console.log(`✅ [EmailAutomation] Email successfully delivered via secondary provider Brevo to ${to} (ID: ${messageId})`);
-      }
-    } catch (brevoErr) {
-      lastError = brevoErr;
-      console.warn(`⚠️ [EmailAutomation] Secondary provider Brevo failed for ${to}:`, brevoErr.message);
+      console.warn(`⚠️ [EmailAutomation] Secondary provider Resend rejected dispatch to ${to} (${resendErr.message}). Engaging tertiary fallback provider...`);
     }
   }
 
@@ -340,8 +382,14 @@ async function sendWelcomeEmail(user, options = {}) {
   const cleanEmail = rawEmail.trim().toLowerCase();
 
   // 0. Check passed user object duplicate flag
-  if (user.welcome_email_sent === true) {
+  if (user.welcome_email_sent === true || user.welcomeEmailSent === true) {
     console.log(`ℹ️ [EmailAutomation] Welcome email already marked as sent for user: ${userId || cleanEmail}. Skipping duplicate.`);
+    return { success: true, skipped: true, reason: 'welcome_email_already_sent' };
+  }
+
+  // 0b. Check in-memory duplicate set (handles fast re-entry or offline DB cases)
+  if (inMemoryWelcomeSent.has(cleanEmail) || (userId && inMemoryWelcomeSent.has(userId))) {
+    console.log(`ℹ️ [EmailAutomation] In-memory check confirms welcome email already dispatched for user: ${userId || cleanEmail}. Skipping duplicate.`);
     return { success: true, skipped: true, reason: 'welcome_email_already_sent' };
   }
 
@@ -448,6 +496,25 @@ async function sendWelcomeEmail(user, options = {}) {
         console.warn('⚠️ [EmailAutomation] Could not record welcome delivery log in Supabase:', dbWriteErr.message);
       }
     }
+
+    // Update in-memory duplicate tracker to guarantee idempotency across requests
+    inMemoryWelcomeSent.add(cleanEmail);
+    if (userId) inMemoryWelcomeSent.add(userId);
+
+    // Sync into userStore so user is available for scheduled recommendations
+    try {
+      const userStore = require('./userStore');
+      userStore.upsertUser({
+        id: userId || `usr_${Date.now()}`,
+        uid: userId || `usr_${Date.now()}`,
+        email: cleanEmail,
+        name: userName,
+        dietType,
+        dailyRecommendationEmails: true,
+        welcomeEmailSent: true,
+        lastSignInTime: nowIso
+      });
+    } catch (_) {}
 
     console.log(`✅ [EmailAutomation] Welcome email delivered to ${cleanEmail} via ${provider} (ID: ${messageId})`);
     return {
@@ -730,6 +797,11 @@ async function sendDailyRecommendationEmail(user, options = {}) {
   // 2. Check local date and idempotency
   const { dateStr } = getLocalTimeInfo(timezone);
   const todayUtc = new Date().toISOString().split('T')[0];
+  const dailyKey = `${cleanEmail}_${dateStr}`;
+
+  if (!force && inMemoryDailySent.has(dailyKey)) {
+    return { success: true, skipped: true, reason: 'daily_email_already_sent_today', date: dateStr };
+  }
 
   if (user.last_daily_email_sent && !force) {
     if (
@@ -738,6 +810,7 @@ async function sendDailyRecommendationEmail(user, options = {}) {
       user.last_daily_email_sent === todayUtc ||
       user.last_daily_email_sent.startsWith(todayUtc)
     ) {
+      inMemoryDailySent.add(dailyKey);
       return { success: true, skipped: true, reason: 'daily_recommendation_already_delivered_today', date: dateStr };
     }
   }
@@ -754,6 +827,7 @@ async function sendDailyRecommendationEmail(user, options = {}) {
         .maybeSingle();
 
       if (existingLog) {
+        inMemoryDailySent.add(dailyKey);
         return { success: true, skipped: true, reason: 'daily_email_already_sent_today', date: dateStr };
       }
     } catch (_) {}
@@ -884,6 +958,8 @@ async function sendDailyRecommendationEmail(user, options = {}) {
       }
     }
 
+    inMemoryDailySent.add(dailyKey);
+
     console.log(`✅ [EmailAutomation] Daily food email delivered to ${cleanEmail} for ${dateStr} via ${provider} (ID: ${messageId})`);
     return {
       success: true,
@@ -940,35 +1016,86 @@ async function processDailyEmailQueue(forceRun = false) {
   let totalFailed = 0;
 
   try {
-    // 1. Query all active users with daily emails enabled
-    const { data: usersWithPrefs, error: fetchErr } = await db
-      .from('email_preferences')
-      .select(`
-        user_id,
-        email_enabled,
-        daily_email_enabled,
-        preferred_delivery_time,
-        timezone,
-        last_daily_email_sent
-      `)
-      .eq('daily_email_enabled', true)
-      .eq('email_enabled', true);
+    const candidateUsers = [];
 
-    if (fetchErr) {
-      throw new Error(`Failed to query email_preferences: ${fetchErr.message}`);
+    // 1. Query Supabase email_preferences & profiles if database client is available
+    if (db) {
+      try {
+        const { data: usersWithPrefs } = await db
+          .from('email_preferences')
+          .select(`
+            user_id,
+            email_enabled,
+            daily_email_enabled,
+            preferred_delivery_time,
+            timezone,
+            last_daily_email_sent
+          `)
+          .eq('daily_email_enabled', true)
+          .eq('email_enabled', true);
+
+        if (Array.isArray(usersWithPrefs) && usersWithPrefs.length > 0) {
+          for (const pref of usersWithPrefs) {
+            const { data: profile } = await db
+              .from('profiles')
+              .select('*')
+              .eq('id', pref.user_id)
+              .maybeSingle();
+
+            if (profile && profile.email) {
+              candidateUsers.push({
+                ...profile,
+                user_id: pref.user_id,
+                timezone: pref.timezone || 'Asia/Kolkata',
+                preferred_delivery_time: pref.preferred_delivery_time || '09:00',
+                daily_email_enabled: pref.daily_email_enabled,
+                email_enabled: pref.email_enabled
+              });
+            }
+          }
+        }
+      } catch (sbErr) {
+        console.warn('⚠️ [EmailScheduler] Supabase email preferences query notice:', sbErr.message);
+      }
     }
 
-    if (!usersWithPrefs || usersWithPrefs.length === 0) {
-      console.log('ℹ️ [EmailScheduler] No users with daily emails enabled.');
+    // 2. Merge users from userStore (ensures users registered locally or when RLS restricts anon queries are included)
+    try {
+      const userStore = require('./userStore');
+      const localUsers = userStore.getAllUsers();
+      for (const lu of localUsers) {
+        const luEmail = (lu.email || '').trim().toLowerCase();
+        if (luEmail && !candidateUsers.some(u => (u.email || '').trim().toLowerCase() === luEmail)) {
+          const optedIn = lu.dailyRecommendationEmails !== false &&
+            lu.daily_email_enabled !== false &&
+            lu.email_enabled !== false &&
+            lu.preferences?.dailyRecommendationEmails !== false &&
+            lu.notificationSettings?.dailySuggestions !== false;
+          if (optedIn) {
+            candidateUsers.push({
+              ...lu,
+              user_id: lu.id || lu.uid,
+              timezone: lu.timezone || 'Asia/Kolkata',
+              preferred_delivery_time: lu.preferred_delivery_time || '09:00',
+              daily_email_enabled: true,
+              email_enabled: true
+            });
+          }
+        }
+      }
+    } catch (_) {}
+
+    if (candidateUsers.length === 0) {
+      console.log('ℹ️ [EmailScheduler] No users with daily recommendations enabled.');
       isBatchRunning = false;
       return { success: true, dispatched: 0, skipped: 0, failed: 0 };
     }
 
-    console.log(`ℹ️ [EmailScheduler] Found ${usersWithPrefs.length} users with daily recommendations enabled.`);
+    console.log(`ℹ️ [EmailScheduler] Found ${candidateUsers.length} user(s) eligible for daily recommendation queue.`);
 
-    for (const pref of usersWithPrefs) {
-      const tz = pref.timezone || 'Asia/Kolkata';
-      const targetTime = pref.preferred_delivery_time || '09:00';
+    for (const user of candidateUsers) {
+      const tz = user.timezone || 'Asia/Kolkata';
+      const targetTime = user.preferred_delivery_time || '09:00';
       const targetHour = parseInt(targetTime.split(':')[0], 10) || 9;
       const { hour: currentLocalHour, dateStr } = getLocalTimeInfo(tz);
 
@@ -978,39 +1105,40 @@ async function processDailyEmailQueue(forceRun = false) {
         continue;
       }
 
-      // Check if already delivered for this date
-      const { data: alreadyDelivered } = await db
-        .from('email_delivery_logs')
-        .select('id')
-        .eq('user_id', pref.user_id)
-        .eq('email_type', 'daily_recommendation')
-        .eq('delivery_date', dateStr)
-        .in('status', ['sent', 'delivered'])
-        .maybeSingle();
-
-      if (alreadyDelivered && !forceRun) {
+      // Check if already delivered for this date (in-memory)
+      const cleanEmail = (user.email || '').trim().toLowerCase();
+      const dailyKey = `${cleanEmail}_${dateStr}`;
+      if (!forceRun && inMemoryDailySent.has(dailyKey)) {
         totalSkipped++;
         continue;
       }
 
-      // Fetch user profile
-      const { data: profile } = await db
-        .from('profiles')
-        .select('*')
-        .eq('id', pref.user_id)
-        .maybeSingle();
+      // Check if already delivered for this date (database)
+      if (db && user.user_id && !forceRun) {
+        try {
+          const { data: alreadyDelivered } = await db
+            .from('email_delivery_logs')
+            .select('id')
+            .eq('user_id', user.user_id)
+            .eq('email_type', 'daily_recommendation')
+            .eq('delivery_date', dateStr)
+            .in('status', ['sent', 'delivered'])
+            .maybeSingle();
 
-      if (!profile || !profile.email) {
-        totalSkipped++;
-        continue;
+          if (alreadyDelivered) {
+            inMemoryDailySent.add(dailyKey);
+            totalSkipped++;
+            continue;
+          }
+        } catch (_) {}
       }
 
       try {
-        await sendDailyRecommendationEmail(profile, { forceRun });
+        await sendDailyRecommendationEmail(user, { forceRun });
         totalDispatched++;
       } catch (singleErr) {
         totalFailed++;
-        console.error(`❌ [EmailScheduler] Failed dispatch for user ${profile.email}:`, singleErr.message);
+        console.error(`❌ [EmailScheduler] Failed dispatch for user ${user.email}:`, singleErr.message);
       }
     }
   } catch (err) {

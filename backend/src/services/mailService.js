@@ -86,77 +86,84 @@ async function sendEmail({ to, subject, html, text, from }) {
 
   // 2. Fallback Engine: Resend HTTPS API
   const resendApiKey = process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.trim() : '';
-  if (!resendApiKey) {
-    const error = new Error('No email provider configured. Please configure BREVO_API_KEY in backend/.env.');
-    error.code = 'EMAIL_KEY_MISSING';
-    error.statusCode = 503;
-    throw error;
-  }
-
   const sender = from || process.env.RESEND_FROM || DEFAULT_SENDER;
   const mailSubject = subject || 'Notification from FoodieBite';
 
-  console.log(`📨 [MailService] Sending email via Resend fallback HTTPS API:`);
-  console.log(`   From: ${sender}`);
-  console.log(`   To:   ${cleanTo}`);
-  console.log(`   Subj: ${mailSubject}`);
+  if (resendApiKey) {
+    console.log(`📨 [MailService] Sending email via Resend fallback HTTPS API:`);
+    console.log(`   From: ${sender}`);
+    console.log(`   To:   ${cleanTo}`);
+    console.log(`   Subj: ${mailSubject}`);
 
-  try {
-    const resend = getResendClient();
-    const payload = {
-      from: sender,
-      to: [cleanTo],
-      subject: mailSubject,
-      html: html || `<p>${text || ''}</p>`
-    };
-    if (text) {
-      payload.text = text;
-    }
-
-    const { data, error } = await resend.emails.send(payload);
-
-    if (error) {
-      console.error(`❌ [MailService] Resend API error: ${error.message} (${error.name || 'API_ERROR'})`);
-      
-      const sendError = new Error(error.message || 'Failed to dispatch email via Resend');
-      sendError.code = error.name || 'RESEND_API_ERROR';
-      sendError.statusCode = error.statusCode || 500;
-
-      if (error.statusCode === 403 || (error.message && error.message.includes('testing emails'))) {
-        sendError.code = 'RESEND_SANDBOX_RESTRICTION';
-        sendError.advice = 'Using onboarding@resend.dev permits sending only to delivered@resend.dev or the Resend account owner email. Verify a custom domain at https://resend.com/domains to send to arbitrary recipients.';
+    try {
+      const resend = getResendClient();
+      const payload = {
+        from: sender,
+        to: [cleanTo],
+        subject: mailSubject,
+        html: html || `<p>${text || ''}</p>`
+      };
+      if (text) {
+        payload.text = text;
       }
 
-      throw sendError;
+      const { data, error } = await resend.emails.send(payload);
+
+      if (error) {
+        console.warn(`⚠️ [MailService] Resend API error (${error.message}). Checking SMTP fallback...`);
+      } else {
+        console.log(`✅ [MailService] Resend accepted email! ID: ${data?.id}`);
+        return {
+          success: true,
+          id: data?.id,
+          to: cleanTo,
+          provider: 'resend',
+          sender,
+          timestamp: new Date().toISOString()
+        };
+      }
+    } catch (resendErr) {
+      console.warn(`⚠️ [MailService] Resend dispatch failed (${resendErr.message}). Checking SMTP fallback...`);
     }
-
-    console.log(`✅ [MailService] Resend accepted email! ID: ${data?.id}`);
-
-    // Persist real sent email log to Firestore
-    const db = getFirestoreDb();
-    if (db) {
-      db.collection('email_logs').add({
-        recipient: cleanTo,
-        subject: mailSubject,
-        sender,
-        resendId: data?.id || null,
-        status: 'delivered',
-        timestamp: new Date().toISOString()
-      }).catch(logErr => console.warn('⚠️ Could not log sent email to Firestore:', logErr.message));
-    }
-
-    return {
-      success: true,
-      id: data?.id,
-      to: cleanTo,
-      sender,
-      timestamp: new Date().toISOString()
-    };
-
-  } catch (err) {
-    console.error(`❌ [MailService Exception]:`, err.message);
-    throw err;
   }
+
+  // 3. Fallback Engine: SMTP (Nodemailer)
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      const nodemailer = require('nodemailer');
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: parseInt(process.env.SMTP_PORT, 10) || 587,
+        secure: parseInt(process.env.SMTP_PORT, 10) === 465,
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS
+        }
+      });
+      const info = await transporter.sendMail({
+        from: from || process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: cleanTo,
+        subject: mailSubject,
+        text,
+        html: html || `<p>${text || ''}</p>`
+      });
+      console.log(`✅ [MailService] Email delivered via SMTP! ID: ${info.messageId}`);
+      return {
+        success: true,
+        id: info.messageId,
+        to: cleanTo,
+        provider: 'smtp',
+        timestamp: new Date().toISOString()
+      };
+    } catch (smtpErr) {
+      console.warn(`⚠️ [MailService] SMTP fallback failed:`, smtpErr.message);
+    }
+  }
+
+  const error = new Error('No working email provider configured. Please configure BREVO_API_KEY in backend/.env.');
+  error.code = 'EMAIL_KEY_MISSING';
+  error.statusCode = 503;
+  throw error;
 }
 
 /**

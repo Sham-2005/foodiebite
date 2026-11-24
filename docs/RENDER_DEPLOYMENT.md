@@ -51,7 +51,15 @@ JWT_EXPIRE=7d
 SUPABASE_URL=https://wzhxalmixfeqszgwqeqr.supabase.co
 SUPABASE_KEY=<supabase-anon-or-service-role-key>
 
-# Email Delivery Service (Resend HTTPS API)
+# Primary Email Delivery Service (Brevo REST API v3 - Verified Sender)
+BREVO_API_KEY=xkeysib_your_brevo_api_key_here
+BREVO_SENDER_EMAIL=foodiebite881@gmail.com
+BREVO_SENDER_NAME=FoodieBite
+DAILY_RECOMMENDATION_ENABLED=true
+DAILY_RECOMMENDATION_CRON=0 * * * *
+DAILY_RECOMMENDATION_TIMEZONE=Asia/Kolkata
+
+# Secondary Email Fallback Service (Resend HTTPS API)
 RESEND_API_KEY=re_your_resend_api_key_here
 RESEND_FROM=FoodieBite <onboarding@resend.dev>
 

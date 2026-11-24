@@ -1320,25 +1320,37 @@ export async function apiSendWelcomeEmail(userData = null) {
   if (!token) token = getToken();
 
   const user = userData || getLocalActiveUser();
+  if (!user || !user.email) {
+    return { success: true, skipped: true, reason: 'no_user_email' };
+  }
+
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE_URL}/email/welcome`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      user: user ? {
-        id: user.id || user.uid,
-        email: user.email,
-        name: user.name || user.full_name || (user.email ? user.email.split('@')[0] : 'Explorer'),
-        dietType: user.dietType,
-        city: user.city
-      } : null
-    })
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || 'Failed to send welcome email');
-  return data;
+  try {
+    const res = await fetch(`${API_BASE_URL}/email/welcome`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        user: {
+          id: user.id || user.uid,
+          email: user.email,
+          name: user.name || user.full_name || (user.email ? user.email.split('@')[0] : 'Explorer'),
+          dietType: user.dietType,
+          city: user.city
+        }
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.warn('⚠️ [apiSendWelcomeEmail] Server notice:', data.message);
+      return { success: false, message: data.message };
+    }
+    return data;
+  } catch (err) {
+    console.warn('⚠️ [apiSendWelcomeEmail] Dispatch notice:', err.message);
+    return { success: false, message: err.message };
+  }
 }
 
 export async function apiLoginWithGoogle() {
