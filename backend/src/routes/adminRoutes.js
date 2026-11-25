@@ -111,6 +111,7 @@ router.get('/users/:id/medical-reports', adminController.getUserMedicalReports);
 router.get('/users/:id/medical-reports/:reportId', adminController.getUserMedicalReportById);
 router.post('/users/:id/medical-reports/:reportId/analyze', adminController.analyzeUserMedicalReport);
 router.get('/users/:id/medical-reports/:reportId/view', adminController.viewUserMedicalReport);
+router.get('/users/:id/medical-reports/:reportId/document', adminController.serveMedicalReportDocument);
 router.delete('/users/:id/medical-reports/:reportId', adminController.deleteUserMedicalReport);
 
 // Admin notification settings routes

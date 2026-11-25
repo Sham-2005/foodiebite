@@ -210,6 +210,17 @@ endpoints_data = [
     ("/api/admin/restaurant-requests/:id", "GET", "Yes", "admin", "adminController.getRestaurantRequestById", "adminRoutes.js", "Inspect merchant onboarding application"),
     ("/api/admin/restaurant-requests/:id/approve", "POST", "Yes", "admin", "adminController.approveRestaurantRequest", "adminRoutes.js", "Approve merchant and publish to approved_restaurants"),
     ("/api/admin/restaurant-requests/:id/reject", "POST", "Yes", "admin", "adminController.rejectRestaurantRequest", "adminRoutes.js", "Reject merchant onboarding application"),
+    ("/api/admin/users/:id/medical-reports", "GET", "Yes", "admin", "adminController.getUserMedicalReports", "adminRoutes.js", "List user uploaded medical reports with clinical summary cards"),
+    ("/api/admin/users/:id/medical-reports/:reportId", "GET", "Yes", "admin", "adminController.getUserMedicalReportById", "adminRoutes.js", "Inspect structured biomarker test results and summary"),
+    ("/api/admin/users/:id/medical-reports/:reportId/analyze", "POST", "Yes", "admin", "adminController.analyzeUserMedicalReport", "adminRoutes.js", "Execute Local Ollama qwen2.5:0.5b clinical intelligence analysis"),
+    ("/api/admin/users/:id/medical-reports/:reportId/view", "GET", "Yes", "admin", "adminController.viewUserMedicalReport", "adminRoutes.js", "Generate short-lived signed URL (300s TTL) for document viewing"),
+    ("/api/admin/users/:id/medical-reports/:reportId/document", "GET", "Yes", "admin", "adminController.serveMedicalReportDocument", "adminRoutes.js", "Direct secure stream of PDF document with strict cache control"),
+    ("/api/admin/users/:id/medical-reports/:reportId", "DELETE", "Yes", "admin", "adminController.deleteUserMedicalReport", "adminRoutes.js", "Permanently remove medical report and physical PDF file"),
+    ("/api/admin/foods/stats", "GET", "Yes", "admin", "adminController.getFoodDatabaseStats", "adminRoutes.js", "Retrieve aggregated food database statistics and counts"),
+    ("/api/admin/foods/:id", "GET", "Yes", "admin", "adminController.getFoodDatabaseItemById", "adminRoutes.js", "Retrieve detailed nutritional profile of food catalog record"),
+    ("/api/admin/foods", "GET", "Yes", "admin", "adminController.getAllFoodsDatabase", "adminRoutes.js", "Paginated, filterable food database management catalog"),
+    ("/api/coach/message", "POST", "Yes", "user, admin", "coachController.sendMessage", "coachRoutes.js", "Send message to FoodieBite AI Nutritionist with Ollama qwen2.5:0.5b"),
+    ("/api/coach/status", "GET", "No", "Public", "coachController.getStatus", "coachRoutes.js", "Inspect Ollama local AI server connectivity and model availability"),
 
     # Merchant & Restaurants
     ("/api/merchant/restaurant-requests", "POST", "Yes", "merchant, admin", "restaurantRequestStore.addRequest", "merchantRoutes.js", "Submit restaurant onboarding application"),
@@ -566,6 +577,7 @@ dependency_data = [
 # 5. PERFORMANCE RESULTS DATA
 # ════════════════════════════════════════════════════════════════════
 performance_data = [
+    ("Live Concurrency Baseline", "100 VUs", "60 seconds", "Core API Mix (/health, /ready, /debug/ai, /categories, /recommendations)", "292.6 req/sec", "0.33 ms", "335.33 ms", "4047.35 ms", "2271.98 ms", "2482.29 ms", "0.00%", "Pass"),
     ("Baseline Load Test", "100 VUs", "60 seconds", "GET /health", "148 req/sec", "4 ms", "12 ms", "45 ms", "18 ms", "28 ms", "0.00%", "Pass"),
     ("Baseline Load Test", "100 VUs", "60 seconds", "GET /api/food/recommendations", "112 req/sec", "22 ms", "74 ms", "310 ms", "142 ms", "198 ms", "0.00%", "Pass"),
     ("Baseline Load Test", "100 VUs", "60 seconds", "GET /api/food/search?q=apple", "125 req/sec", "15 ms", "52 ms", "240 ms", "98 ms", "145 ms", "0.00%", "Pass"),

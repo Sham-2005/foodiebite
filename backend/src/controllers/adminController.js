@@ -6,9 +6,12 @@
 
 'use strict';
 
+const fs = require('fs');
 const { getSupabaseAdmin, getSupabaseClient } = require('../config/supabase');
 const feedbackStore = require('../services/feedbackStore');
 const restaurantRequestStore = require('../services/restaurantRequestStore');
+const medicalReportStore = require('../services/medicalReportStore');
+const { processDocument } = require('../services/documentProcessorService');
 const {
   getFeatureUsageStats,
   logAdminAudit,
@@ -132,8 +135,13 @@ async function fetchCombinedUsers(forceRefresh = false) {
     } catch (_) {}
   }
 
-  // Count medical reports per user
+  // Count medical reports per user (from resilient store and Supabase)
   const medCounts = {};
+  try {
+    const localCounts = medicalReportStore.getAllReportsCountByUser();
+    Object.assign(medCounts, localCounts);
+  } catch (_) {}
+
   if (client) {
     try {
       const { data: medData } = await client.from('medical_reports').select('user_id');
@@ -145,6 +153,7 @@ async function fetchCombinedUsers(forceRefresh = false) {
 
   const finalUsers = mergedProfiles.map(p => {
     const prefs = p.preferences || {};
+    const pEmail = (p.email || '').toLowerCase().trim();
     return {
       id: p.id,
       uid: p.id,
@@ -163,8 +172,8 @@ async function fetchCombinedUsers(forceRefresh = false) {
       spiceLevel: prefs.spiceLevel || 'Medium',
       healthGoals: prefs.healthGoals || [],
       allergies: prefs.allergies || [],
-      favoritesCount: favCounts[p.id] || 0,
-      medicalReportsCount: medCounts[p.id] || 0,
+      favoritesCount: favCounts[p.id] || (pEmail ? favCounts[pEmail] : 0) || 0,
+      medicalReportsCount: medCounts[p.id] || (p.uid ? medCounts[p.uid] : 0) || (pEmail ? medCounts[pEmail] : 0) || 0,
       profileMissing: false
     };
   });
@@ -405,15 +414,25 @@ exports.getUserById = async (req, res, next) => {
       favCount = count || 0;
     } catch (_) {}
 
-    // User medical reports count
+    // User medical reports count (from persistent store and Supabase)
     let medReportsCount = 0;
     try {
-      const { count } = await client
-        .from('medical_reports')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', id);
-      medReportsCount = count || 0;
+      const userReports = medicalReportStore.getReportsByUserId(id);
+      medReportsCount = userReports.length;
     } catch (_) {}
+
+    if (medReportsCount === 0 && client) {
+      try {
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        if (UUID_REGEX.test(id)) {
+          const { count } = await client
+            .from('medical_reports')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', id);
+          if (count) medReportsCount = count;
+        }
+      } catch (_) {}
+    }
 
     const userDetails = {
       id: id,
@@ -1252,64 +1271,66 @@ exports.updateNotificationSettings = async (req, res, next) => {
 exports.getUserMedicalReports = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const client = getClient();
-    if (!client) {
-      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
-    }
-
     let rawReports = [];
-    try {
-      const { data, error: rErr } = await client
-        .from('medical_reports')
-        .select('*')
-        .eq('user_id', id)
-        .order('created_at', { ascending: false });
 
-      if (data && data.length > 0) {
-        rawReports = data;
-      } else if (id && id.includes('@')) {
-        const { data: p } = await client
-          .from('profiles')
-          .select('id')
-          .eq('email', id.toLowerCase().trim())
-          .maybeSingle();
-        if (p?.id) {
-          const { data: altData } = await client
+    // 1. Fetch from persistent medicalReportStore (resolves across UUID, Firebase UID, and email)
+    try {
+      rawReports = medicalReportStore.getReportsByUserId(id);
+    } catch (_) {}
+
+    // 2. Also check Supabase if connected
+    const client = getClient();
+    if (client && rawReports.length === 0) {
+      try {
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        let queryUserId = id;
+        if (!UUID_REGEX.test(id) && id && id.includes('@')) {
+          const { data: p } = await client
+            .from('profiles')
+            .select('id')
+            .eq('email', id.toLowerCase().trim())
+            .maybeSingle();
+          if (p?.id) queryUserId = p.id;
+        }
+
+        if (UUID_REGEX.test(queryUserId)) {
+          const { data, error: rErr } = await client
             .from('medical_reports')
             .select('*')
-            .eq('user_id', p.id)
+            .eq('user_id', queryUserId)
             .order('created_at', { ascending: false });
-          if (altData && altData.length > 0) {
-            rawReports = altData;
+          if (!rErr && Array.isArray(data) && data.length > 0) {
+            rawReports = data;
           }
         }
+      } catch (queryErr) {
+        console.warn('getUserMedicalReports Supabase notice:', queryErr.message);
       }
-    } catch (queryErr) {
-      console.warn('getUserMedicalReports query note:', queryErr.message);
     }
 
     const reports = (rawReports || []).map(r => {
-      const testResults = buildStructuredTestResults(r.analysis || {}, r.raw_ocr_text || '');
+      const rawText = r.raw_ocr_text || r.rawOcrText || '';
+      const testResults = buildStructuredTestResults(r.analysis || {}, rawText);
       const summaryCards = calculateSummaryCards(testResults);
-      const isFailed = r.processing_status === 'ocr_failed' || r.analysis?.analysisFailed;
-      const isCompleted = Boolean(r.analysis && (r.analysis.summary || r.analysis.healthSummary || r.analysis.intelligence));
+      const isFailed = r.processing_status === 'ocr_failed' || r.processingStatus === 'ocr_failed' || r.analysis?.analysisFailed;
+      const isCompleted = Boolean(r.analysis && (r.analysis.summary || r.analysis.healthSummary || r.analysis.intelligence || r.analysis.biomarkers));
       const statusIndicator = isFailed ? 'Analysis Failed' : (isCompleted ? 'Analysis Completed' : 'Not Analyzed');
 
       return {
-        id: r.id,
-        userId: r.user_id,
-        reportName: r.report_name || r.original_filename || 'Medical Report',
-        originalFilename: r.original_filename || 'report.pdf',
-        mimeType: r.mime_type || 'application/pdf',
-        fileSizeBytes: r.file_size_bytes || 0,
-        uploadDate: r.created_at,
-        documentType: r.document_type || 'digital_pdf',
-        processingStatus: r.processing_status || 'completed',
+        id: r.id || r._id,
+        userId: r.user_id || r.userId || id,
+        reportName: r.report_name || r.reportName || r.original_filename || 'Medical Report',
+        originalFilename: r.original_filename || r.filename || 'report.pdf',
+        mimeType: r.mime_type || r.mimeType || 'application/pdf',
+        fileSizeBytes: r.file_size_bytes || r.fileSize || 0,
+        uploadDate: r.created_at || r.uploadDate || r.uploadedAt || new Date().toISOString(),
+        documentType: r.document_type || r.documentType || 'digital_pdf',
+        processingStatus: r.processing_status || r.processingStatus || 'completed',
         statusIndicator,
-        ocrConfidence: r.ocr_confidence || 95,
+        ocrConfidence: r.ocr_confidence || r.ocrConfidence || 95,
         summaryCards,
         hasAnalysis: isCompleted,
-        analysisSummary: r.analysis?.summary || 'Report processed and stored securely.',
+        analysisSummary: r.analysis?.summary || r.analysis?.intelligence?.summary || 'Report processed and stored securely.',
         healthSummary: r.analysis?.healthSummary || null,
         disclaimer: MEDICAL_DISCLAIMER
       };
@@ -1335,41 +1356,46 @@ exports.getUserMedicalReports = async (req, res, next) => {
 exports.getUserMedicalReportById = async (req, res, next) => {
   try {
     const { id, reportId } = req.params;
-    const client = getClient();
-    if (!client) {
-      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
+
+    // 1. Fetch from persistent medicalReportStore
+    let report = medicalReportStore.getReportById(reportId);
+
+    // 2. Check Supabase if not found locally
+    if (!report) {
+      const client = getClient();
+      if (client) {
+        try {
+          const { data } = await client
+            .from('medical_reports')
+            .select('*')
+            .eq('id', reportId)
+            .maybeSingle();
+          if (data) report = data;
+        } catch (_) {}
+      }
     }
 
-    const { data: report, error } = await client
-      .from('medical_reports')
-      .select('*')
-      .eq('id', reportId)
-      .eq('user_id', id)
-      .maybeSingle();
-
-    if (error || !report) {
+    if (!report) {
       return res.status(404).json({ success: false, message: 'Medical report not found.' });
     }
 
     // Fetch user profile for dietary context
-    const { data: profileDoc } = await client
-      .from('profiles')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
-
-    const prefs = profileDoc?.preferences || {};
+    const userStore = require('../services/userStore');
+    const uDoc = userStore.getUserById(id) || (id && id.includes('@') ? userStore.findByEmail(id) : null);
+    const prefs = uDoc?.preferences || {};
     const userProfile = {
-      dietType: profileDoc?.diet_type || prefs.dietType || 'Vegetarian',
-      cuisines: prefs.cuisines || [],
+      id: id,
+      dietType: uDoc?.dietType || prefs.dietType || 'Vegetarian',
+      cuisines: prefs.cuisines || ['indian'],
       allergies: prefs.allergies || [],
-      healthGoals: prefs.healthGoals || []
+      healthGoals: prefs.healthGoals || ['healthy_eating']
     };
 
-    const testResults = buildStructuredTestResults(report.analysis || {}, report.raw_ocr_text || '');
+    const rawText = report.raw_ocr_text || report.rawOcrText || '';
+    const testResults = buildStructuredTestResults(report.analysis || {}, rawText);
     const summaryCards = calculateSummaryCards(testResults);
-    const isFailed = report.processing_status === 'ocr_failed' || report.analysis?.analysisFailed;
-    const isCompleted = Boolean(report.analysis && (report.analysis.summary || report.analysis.healthSummary || report.analysis.intelligence));
+    const isFailed = report.processing_status === 'ocr_failed' || report.processingStatus === 'ocr_failed' || report.analysis?.analysisFailed;
+    const isCompleted = Boolean(report.analysis && (report.analysis.summary || report.analysis.healthSummary || report.analysis.intelligence || report.analysis.biomarkers));
     const statusIndicator = isFailed ? 'Analysis Failed' : (isCompleted ? 'Analysis Completed' : 'Not Analyzed');
 
     const abnormalValues = testResults.filter(t => t.status === 'High' || t.status === 'Low');
@@ -1388,8 +1414,8 @@ exports.getUserMedicalReportById = async (req, res, next) => {
         ? abnormalValues.map(a => `${a.test} measured at ${a.result} ${a.unit} (${a.status} relative to ${a.referenceRange}) warrants clinical correlation.`)
         : ['All measured biomarkers within reference ranges.'],
       healthcareGuidance: report.analysis?.intelligence?.healthcareGuidance || 'Consult your healthcare provider for clinical evaluation of laboratory results.',
-      reportDate: report.created_at,
-      summaryGenerationDate: report.analysis?.lastAnalyzedAt || report.created_at,
+      reportDate: report.created_at || report.uploadDate || new Date().toISOString(),
+      summaryGenerationDate: report.analysis?.lastAnalyzedAt || report.created_at || new Date().toISOString(),
       analysisStatus: statusIndicator,
       disclaimer: MEDICAL_DISCLAIMER
     };
@@ -1399,18 +1425,18 @@ exports.getUserMedicalReportById = async (req, res, next) => {
     res.status(200).json({
       success: true,
       report: {
-        id: report.id,
-        userId: report.user_id,
-        reportName: report.report_name || report.original_filename || 'Medical Report',
-        originalFilename: report.original_filename,
-        mimeType: report.mime_type,
-        fileSizeBytes: report.file_size_bytes,
-        uploadDate: report.created_at,
-        documentType: report.document_type,
-        processingStatus: report.processing_status,
+        id: report.id || report._id,
+        userId: report.user_id || report.userId || id,
+        reportName: report.report_name || report.reportName || report.original_filename || 'Medical Report',
+        originalFilename: report.original_filename || report.filename,
+        mimeType: report.mime_type || report.mimeType || 'application/pdf',
+        fileSizeBytes: report.file_size_bytes || report.fileSize || 0,
+        uploadDate: report.created_at || report.uploadDate || report.uploadedAt,
+        documentType: report.document_type || report.documentType || 'digital_pdf',
+        processingStatus: report.processing_status || report.processingStatus || 'completed',
         statusIndicator,
-        ocrConfidence: report.ocr_confidence,
-        rawOcrText: report.raw_ocr_text,
+        ocrConfidence: report.ocr_confidence || report.ocrConfidence || 95,
+        rawOcrText: rawText,
         summaryCards,
         testResults,
         analysis: report.analysis,
@@ -1431,44 +1457,63 @@ exports.getUserMedicalReportById = async (req, res, next) => {
 exports.analyzeUserMedicalReport = async (req, res, next) => {
   try {
     const { id, reportId } = req.params;
+
+    // 1. Fetch from persistent medicalReportStore
+    let report = medicalReportStore.getReportById(reportId);
+
+    // 2. Check Supabase if not found locally
     const client = getClient();
-    if (!client) {
-      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
+    if (!report && client) {
+      try {
+        const { data } = await client
+          .from('medical_reports')
+          .select('*')
+          .eq('id', reportId)
+          .maybeSingle();
+        if (data) report = data;
+      } catch (_) {}
     }
 
-    const { data: report, error: repErr } = await client
-      .from('medical_reports')
-      .select('*')
-      .eq('id', reportId)
-      .eq('user_id', id)
-      .maybeSingle();
-
-    if (repErr || !report) {
+    if (!report) {
       return res.status(404).json({ success: false, message: 'Medical report not found.' });
     }
 
-    // Fetch user profile for personalized dietary filtering
-    const { data: profileDoc } = await client
-      .from('profiles')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
+    // Extract text from physical document if rawOcrText is missing
+    let rawOcrText = report.raw_ocr_text || report.rawOcrText || '';
+    if (!rawOcrText || rawOcrText.trim().length === 0) {
+      const filePath = medicalReportStore.getReportFilePath(reportId);
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          const extractionResult = await processDocument(filePath, report.mime_type || report.mimeType || 'application/pdf');
+          if (extractionResult.success && extractionResult.text) {
+            rawOcrText = extractionResult.text;
+            report.raw_ocr_text = rawOcrText;
+            report.rawOcrText = rawOcrText;
+          }
+        } catch (ocrErr) {
+          console.warn('OCR extraction warning during analysis:', ocrErr.message);
+        }
+      }
+    }
 
-    const prefs = profileDoc?.preferences || {};
+    // Fetch user profile for personalized dietary filtering
+    const userStore = require('../services/userStore');
+    const uDoc = userStore.getUserById(id) || (id && id.includes('@') ? userStore.findByEmail(id) : null);
+    const prefs = uDoc?.preferences || {};
     const userProfile = {
       id: id,
-      name: profileDoc?.name || 'User',
-      dietType: profileDoc?.diet_type || prefs.dietType || 'Vegetarian',
-      cuisines: prefs.cuisines || [],
+      name: uDoc?.name || 'User',
+      dietType: uDoc?.dietType || prefs.dietType || 'Vegetarian',
+      cuisines: prefs.cuisines || ['indian'],
       allergies: prefs.allergies || [],
-      healthGoals: prefs.healthGoals || [],
+      healthGoals: prefs.healthGoals || ['healthy_eating'],
       spiceLevel: prefs.spiceLevel || 'Medium'
     };
 
-    // Run AI analysis
+    // Run Local Ollama AI analysis (qwen2.5:0.5b)
     const intelligence = await generateMedicalReportIntelligence(report, userProfile);
 
-    // Persist updated analysis in Supabase
+    // Update analysis in medicalReportStore
     const updatedAnalysis = {
       ...(report.analysis || {}),
       intelligence: intelligence.aiAnalysis,
@@ -1479,15 +1524,21 @@ exports.analyzeUserMedicalReport = async (req, res, next) => {
       analyzedBy: req.user?.email || 'admin'
     };
 
-    await client
-      .from('medical_reports')
-      .update({
-        analysis: updatedAnalysis,
-        processing_status: 'completed',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', reportId)
-      .eq('user_id', id);
+    medicalReportStore.updateReportAnalysis(reportId, updatedAnalysis, 'completed');
+
+    // Also update in Supabase if client is available
+    if (client) {
+      try {
+        await client
+          .from('medical_reports')
+          .update({
+            analysis: updatedAnalysis,
+            processing_status: 'completed',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', reportId);
+      } catch (_) {}
+    }
 
     await logAdminAudit(req.user, 'ADMIN_ANALYZE_REPORT', {
       targetUserId: id,
@@ -1510,59 +1561,71 @@ exports.analyzeUserMedicalReport = async (req, res, next) => {
 
 /**
  * GET /api/admin/users/:id/medical-reports/:reportId/view
- * Secure View Document URL: Generates short-lived signed URL (300s) from Supabase Storage
+ * Secure View Document URL: Generates short-lived signed URL (300s) or direct document link
  */
 exports.viewUserMedicalReport = async (req, res, next) => {
   try {
     const { id, reportId } = req.params;
-    const client = getClient();
-    if (!client) {
-      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
-    }
-
-    const { data: report, error } = await client
-      .from('medical_reports')
-      .select('*')
-      .eq('id', reportId)
-      .eq('user_id', id)
-      .maybeSingle();
-
-    if (error || !report) {
-      return res.status(404).json({ success: false, message: 'Report not found.' });
-    }
-
-    let viewUrl = null;
+    const report = medicalReportStore.getReportById(reportId);
+    const host = req.get('host') || 'localhost:5000';
+    const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+    let viewUrl = `${protocol}://${host}/api/admin/users/${id}/medical-reports/${reportId}/document`;
     let signedUrlExpiresIn = 300; // 5 minutes
 
-    if (report.storage_path) {
+    const client = getClient();
+    if (report?.storage_path && client) {
       const cleanPath = report.storage_path.startsWith('medical-reports/')
         ? report.storage_path.replace(/^medical-reports\//, '')
         : report.storage_path;
-
       try {
         const { data: signedData, error: sErr } = await client.storage
           .from('medical-reports')
           .createSignedUrl(cleanPath, signedUrlExpiresIn);
-
         if (!sErr && signedData?.signedUrl) {
           viewUrl = signedData.signedUrl;
         }
-      } catch (storageErr) {
-        console.warn('Storage signed URL generation warning:', storageErr.message);
-      }
+      } catch (_) {}
     }
 
     await logAdminAudit(req.user, 'ADMIN_VIEW_REPORT_DOCUMENT', { targetUserId: id, reportId });
 
     res.status(200).json({
       success: true,
-      reportId: report.id,
-      reportName: report.report_name || report.original_filename,
-      mimeType: report.mime_type || 'application/pdf',
+      reportId: report?.id || reportId,
+      reportName: report?.report_name || report?.reportName || report?.original_filename || 'Medical Report',
+      mimeType: report?.mime_type || report?.mimeType || 'application/pdf',
       viewUrl,
       expiresInSeconds: signedUrlExpiresIn,
-      rawOcrText: report.raw_ocr_text || ''
+      rawOcrText: report?.raw_ocr_text || report?.rawOcrText || ''
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * GET /api/admin/users/:id/medical-reports/:reportId/document
+ * Direct Secure Stream of Medical Document PDF
+ */
+exports.serveMedicalReportDocument = async (req, res, next) => {
+  try {
+    const { id, reportId } = req.params;
+    const report = medicalReportStore.getReportById(reportId);
+    const filePath = medicalReportStore.getReportFilePath(reportId);
+
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, message: 'Medical document file not found on server.' });
+    }
+
+    const filename = report?.original_filename || report?.filename || 'medical_report.pdf';
+    const mimeType = report?.mime_type || report?.mimeType || 'application/pdf';
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+
+    const stream = fs.createReadStream(filePath);
+    stream.pipe(res);
   } catch (err) {
     next(err);
   }
@@ -1575,42 +1638,20 @@ exports.viewUserMedicalReport = async (req, res, next) => {
 exports.deleteUserMedicalReport = async (req, res, next) => {
   try {
     const { id, reportId } = req.params;
+
+    medicalReportStore.deleteReport(id, reportId);
+
     const client = getClient();
-    if (!client) {
-      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
+    if (client) {
+      try {
+        await client
+          .from('medical_reports')
+          .delete()
+          .eq('id', reportId);
+      } catch (_) {}
     }
 
-    const { data: report } = await client
-      .from('medical_reports')
-      .select('storage_path, report_name')
-      .eq('id', reportId)
-      .eq('user_id', id)
-      .maybeSingle();
-
-    // 1. Delete database record
-    const { error: delErr } = await client
-      .from('medical_reports')
-      .delete()
-      .eq('id', reportId)
-      .eq('user_id', id);
-
-    if (delErr) {
-      return res.status(500).json({ success: false, message: delErr.message });
-    }
-
-    // 2. Delete file from Supabase Storage
-    if (report?.storage_path) {
-      const cleanPath = report.storage_path.startsWith('medical-reports/')
-        ? report.storage_path.replace(/^medical-reports\//, '')
-        : report.storage_path;
-
-      await client.storage
-        .from('medical-reports')
-        .remove([cleanPath])
-        .catch(() => {});
-    }
-
-    await logAdminAudit(req.user, 'ADMIN_DELETE_REPORT', { targetUserId: id, reportId, reportName: report?.report_name });
+    await logAdminAudit(req.user, 'ADMIN_DELETE_REPORT', { targetUserId: id, reportId });
 
     res.status(200).json({
       success: true,

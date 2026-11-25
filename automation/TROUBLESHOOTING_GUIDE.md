@@ -1,62 +1,77 @@
-# Troubleshooting Guide — Android Appium Automation & CI/CD
+# Troubleshooting Guide — Live GitHub Pages Deploy & Selenium E2E Automation
 
-Diagnose and resolve common issues encountered during Android mobile automation testing and GitHub Actions emulator runs.
-
----
-
-## 1. Appium Server Connection Issues
-
-### Symptom: `ECONNREFUSED 127.0.0.1:4723`
-* **Root Cause:** Appium server is either not started or running on a different port/interface.
-* **Resolution:**
-  1. Ensure Appium v2 is installed: `appium -v`
-  2. Verify UiAutomator2 driver is installed: `appium driver list --installed`
-  3. Start Appium explicitly on IPv4 loopback: `appium --port 4723 --address 127.0.0.1`
-  4. The framework includes a resilient test harness fallback so that tests can execute and generate reports even when Appium is restarting.
+Diagnose and resolve common issues encountered during live deployment verification, headless Chrome execution, and GitHub Actions CI/CD workflows.
 
 ---
 
-## 2. Android Emulator Startup Timeout in CI/CD
+## 1. Localhost Violation Error
 
-### Symptom: Emulator boots indefinitely or times out after 10 minutes in GitHub Actions.
-* **Root Cause:** Runner lacks hardware virtualization (e.g. running on standard Ubuntu runner without nested KVM).
-* **Resolution:**
-  - Always use `macos-13` or `macos-14` runners in `.github/workflows/android-e2e.yml`.
-  - Pass the recommended speedup flags:
-    `-no-audio -no-boot-anim -no-window -gpu swiftshader_indirect`
-  - Disable window animations via adb upon boot:
-    ```bash
-    adb shell settings put global window_animation_scale 0.0
-    adb shell settings put global transition_animation_scale 0.0
-    adb shell settings put global animator_duration_scale 0.0
-    ```
+### Symptom:
+```
+[CRITICAL SECURITY & POLICY GATE VIOLATION] Target URL (http://localhost:3000/) is a local server.
+MANDATORY REQUIREMENT: Selenium must NEVER run against localhost or local dev servers.
+```
+### Root Cause:
+The framework strictly prohibits running Selenium against local development servers.
 
----
+### Resolution:
+Ensure `BASE_URL` is set to the live production deployment:
+```bash
+# PowerShell
+$env:BASE_URL = "https://<github-username>.github.io/<repository-name>/"
 
-## 3. APK Installation Failure (`INSTALL_FAILED_ALREADY_EXISTS` or `INSTALL_FAILED_UPDATE_INCOMPATIBLE`)
-
-### Symptom: `adb install` fails when pushing new build.
-* **Resolution:**
-  - Use the `-r` flag to reinstall keeping existing data: `adb install -r <apkPath>`
-  - If keystore signatures conflict between debug and release builds, uninstall previous package first:
-    `adb uninstall com.foodiebite.app || true`
+# Bash / Zsh
+export BASE_URL="https://<github-username>.github.io/<repository-name>/"
+```
 
 ---
 
-## 4. GitHub Pages 404 Not Found
+## 2. Live Deployment Verification Timeout
 
-### Symptom: Navigating to `https://<user>.github.io/<repo>/reports/latest/` returns 404.
-* **Resolution:**
-  1. Open GitHub Repository -> **Settings** -> **Pages**.
-  2. Under **Build and deployment** -> **Source**, select **Deploy from a branch**.
-  3. Select Branch: `gh-pages` and Folder: `/ (root)`.
-  4. Ensure `GITHUB_TOKEN` has `contents: write` and `pages: write` permissions in workflow permissions block.
+### Symptom:
+```
+[DeploymentVerifier] Polling LIVE deployment at: https://username.github.io/project/
+[DeploymentVerifier] Attempt 12: Connection pending...
+```
+### Root Cause:
+GitHub Pages deployment takes 30-90 seconds to propagate new static assets after a commit push.
+
+### Resolution:
+1. `DeploymentVerifier.waitForDeployment()` polls for up to 120 seconds with 5-second intervals.
+2. Verify that GitHub Pages is enabled on the repository under **Settings** -> **Pages** (Source: `gh-pages` branch, `/ root`).
+3. Verify that `PUBLIC_URL` was correctly set during build:
+   ```bash
+   PUBLIC_URL="/<repository-name>/" npm run build
+   ```
 
 ---
 
-## 5. Mobile Element Click Interception / Virtual Keyboard Block
+## 3. Chrome WebDriver Binary Mismatch in Headless Mode
 
-### Symptom: Element is obscured by virtual keyboard or floating banner.
-* **Resolution:**
-  - The `BasePage` and `MobileBasePage` POM classes automatically invoke `driver.hideKeyboard()` before interacting with action buttons.
-  - Coordinate centered touch dispatch is applied automatically as a resilient fallback.
+### Symptom:
+`SessionNotCreatedError: This version of ChromeDriver only supports Chrome version X`
+
+### Resolution:
+Selenium WebDriver v4 includes **Selenium Manager**, which automatically downloads and matches the exact ChromeDriver binary for your installed Chrome browser.
+Ensure your dependencies are up to date:
+```bash
+cd automation
+npm update selenium-webdriver
+```
+
+---
+
+## 4. GitHub Actions Artifact Upload Permissions
+
+### Symptom:
+`Resource not accessible by integration` during `peaceiris/actions-gh-pages@v3` or artifact upload.
+
+### Resolution:
+Ensure the workflow file `.github/workflows/deploy-and-test.yml` includes elevated write permissions:
+```yaml
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+```
+And check **Settings** -> **Actions** -> **General** -> **Workflow permissions** -> **Read and write permissions**.

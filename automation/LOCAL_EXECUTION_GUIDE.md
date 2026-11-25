@@ -1,6 +1,6 @@
-# Local & Live Execution Guide — Selenium E2E Automation
+# Local & Live Execution Guide — Enterprise Selenium E2E Automation
 
-This guide explains how to execute the 400+ Selenium E2E test suite strictly against the **LIVE GitHub Pages Deployment**.
+This guide explains how to configure, execute, and verify the 400+ Selenium E2E test suite strictly against the **LIVE GitHub Pages Deployment**.
 
 ---
 
@@ -13,50 +13,87 @@ This guide explains how to execute the 400+ Selenium E2E test suite strictly aga
 ✓ Selenium must always execute against the LIVE GitHub Pages deployment.
 ```
 
-The runner automatically validates `BASE_URL` and throws a fatal exception if localhost or loopback addresses (`127.0.0.1`) are detected.
+The runner automatically validates `BASE_URL` and throws a fatal exception if localhost or loopback addresses (`127.0.0.1`, `0.0.0.0`) are detected.
 
 ---
 
 ## 1. Prerequisites
-- **Node.js**: v18.x, v20.x, or v22.x
-- **Google Chrome**: Modern version (v120+) installed on the host.
-- Selenium WebDriver v4 automatically manages the ChromeDriver binary via Selenium Manager.
+
+Before executing the live Selenium test suite, ensure the following tools are available:
+
+| Tool | Recommended Version | Verification Command |
+| :--- | :--- | :--- |
+| **Node.js** | v18.x, v20.x, or v22.x | `node -v` |
+| **npm** | v9.x or v10.x | `npm -v` |
+| **Google Chrome** | Modern Version (v120+) | `google-chrome --version` / `chrome.exe -v` |
+| **ChromeDriver** | Managed automatically via `selenium-webdriver` v4 Selenium Manager | Built-in |
 
 ---
 
-## 2. Configuration & Live Deployment Target
+## 2. Environment Configuration
 
-The framework reads the deployment URL from `BASE_URL`:
+The framework dynamically resolves the live target application from `BASE_URL`.
 
-### Windows PowerShell:
+### Windows (PowerShell):
 ```powershell
 $env:BASE_URL = "https://sham-2005.github.io/foodiebite/"
 ```
 
-### Linux / macOS:
+### Linux / macOS (Bash / Zsh):
 ```bash
 export BASE_URL="https://sham-2005.github.io/foodiebite/"
 ```
+
+*Note: Hardcoded URLs are strictly forbidden. If `BASE_URL` is omitted, it defaults to the verified production deployment `https://sham-2005.github.io/foodiebite/`.*
 
 ---
 
 ## 3. Running the Live Test Suite
 
-Navigate to the `automation/` directory:
-
+Navigate to the `automation/` directory and install dependencies:
 ```bash
 cd s:\files\food_app\automation
-
-# Execute the 420+ live Selenium tests against GitHub Pages:
-node runners/liveSeleniumRunner.js
+npm install
 ```
+
+### Execute the 400+ Live Selenium Test Cases:
+```bash
+node runners/liveSeleniumRunner.js
+# Or via npm script:
+npm run test:live
+```
+
+### Execution Lifecycle:
+1. **Stage 6 & 7: Deployment Verification**
+   - Polls `BASE_URL` with HTTP GET requests until HTTP 200 is received.
+   - Inspects DOM for production bundles, JS assets, and CSS stylesheets.
+2. **Stage 8: Selenium WebDriver Execution**
+   - Launches Google Chrome in `--headless=new` mode with 1920x1080 resolution.
+   - Executes all 470 test scenarios across 14 modules.
+   - Intercepts potential glitches with resilient fallback wrappers.
+3. **Stage 9 & 10: Multi-Format Report Compilation**
+   - Compiles all 4 Excel workbooks into `Test Results/Excel/`.
+   - Generates interactive HTML reports in `Test Results/HTML/`.
+   - Emits structured JSON telemetry into `Test Results/JSON/`.
+   - Generates GitHub Step Summary markdown in `Test Results/Summary/`.
+4. **Stage 13: Historical Evidence Synchronization**
+   - Automatically syncs reports into `reports/latest/` and `reports/history/build-N/`.
 
 ---
 
-## 4. Execution Output & Quality Gate
+## 4. Viewing Test Reports
 
-The runner executes:
-1. **Stage 6 & 7**: Deployment health verification (polls `BASE_URL`, validates HTTP 200, checks JS/CSS asset integrity).
-2. **Stage 8**: Headless Chrome Selenium automation interacting with live routes.
-3. **Stage 9 & 10**: Compiles all 4 Excel workbooks, 2 HTML reports, JSON telemetry, and Markdown summaries into `Test Results/`.
-4. **Quality Gate**: Evaluates pass percentage ($\ge 95.0\%$ required to pass).
+All deliverables are generated into `Test Results/`:
+
+- **Excel Workbooks (`Test Results/Excel/`):**
+  - `Automation_Test_Report.xlsx` (6 sheets: Executed Test Cases, Passed Tests, Failed Tests, Skipped Tests, Execution Metrics, Defect Summary)
+  - `Passed_Test_Cases.xlsx`
+  - `Failed_Test_Cases.xlsx`
+  - `Summary_Report.xlsx`
+- **Interactive HTML Dashboards (`Test Results/HTML/`):**
+  - `execution-report.html` (Interactive search, filter pills, step expansions)
+  - `dashboard.html` (Executive KPI scorecard)
+- **JSON Telemetry (`Test Results/JSON/`):**
+  - `execution-results.json`
+- **Summary (`Test Results/Summary/`):**
+  - `summary.md`

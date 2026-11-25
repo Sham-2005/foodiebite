@@ -124,7 +124,9 @@ app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 // ── Logger (dev only) ─────────────────────────────────
 if (process.env.NODE_ENV === 'development') {
-  app.use(morgan('dev'));
+  app.use(morgan('dev', {
+    skip: (req) => req.headers['x-load-test'] === 'true' || req.headers['user-agent']?.includes('FoodieBite-LoadTester')
+  }));
 }
 
 // ── Static uploads ────────────────────────────────────

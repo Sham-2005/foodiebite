@@ -714,10 +714,14 @@ export default function AdminDashboardScreen() {
     try {
       const res = await apiAdminGetMedicalReportViewUrl(selectedUserId, reportId);
       if (res?.viewUrl) {
+        let fullUrl = res.viewUrl;
+        if (!fullUrl.startsWith('http')) {
+          fullUrl = `http://localhost:5000${fullUrl.startsWith('/') ? '' : '/'}${fullUrl}`;
+        }
         if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.open === 'function') {
-          window.open(res.viewUrl, '_blank');
+          window.open(fullUrl, '_blank');
         } else {
-          Linking.openURL(res.viewUrl);
+          Linking.openURL(fullUrl);
         }
       } else if (res?.rawOcrText) {
         Alert.alert(

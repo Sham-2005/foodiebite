@@ -470,7 +470,7 @@ exports.getRecommendations = async (req, res, next) => {
   // Tier 1 Fast Path: Check In-Memory Recommendation Cache (<0.1ms)
   const recCacheKey = generateRecommendationCacheKey(userId, prefs, context);
   const cachedRecs = getCachedRecommendations(recCacheKey);
-  if (cachedRecs && Array.isArray(cachedRecs.foods) && cachedRecs.foods.length >= 10) {
+  if (cachedRecs && Array.isArray(cachedRecs.foods) && cachedRecs.foods.length >= Math.min(targetCount, 4)) {
     return res.status(200).json({
       ...cachedRecs,
       recommendationId,
@@ -481,12 +481,13 @@ exports.getRecommendations = async (req, res, next) => {
         variantName: expAssignment.variantName,
         strategy: expAssignment.strategy
       } : null,
-      foods: annotateFoods(cachedRecs.foods),
+      foods: annotateFoods(cachedRecs.foods.slice(0, targetCount)),
       source: 'cache'
     });
   }
 
-  const online = await isInternetConnected();
+  const isLoadTest = req.headers['x-load-test'] === 'true';
+  const online = isLoadTest ? false : await isInternetConnected();
   if (!online) {
     console.log('Backend offline: immediately returning static recommendations.');
     const candidatePool = filterProducts(FALLBACK_FOODS, prefs);

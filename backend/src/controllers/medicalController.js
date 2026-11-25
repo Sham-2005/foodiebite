@@ -15,6 +15,7 @@ const crypto = require('crypto');
 const { getUserSupabaseClient, getSupabaseClient, getSupabaseAdmin } = require('../config/supabase');
 const { processDocument } = require('../services/documentProcessorService');
 const { analyzeReport } = require('../services/medicalAnalysisService');
+const medicalReportStore = require('../services/medicalReportStore');
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function isValidUUID(str) {
@@ -210,7 +211,14 @@ exports.uploadMedicalReport = async (req, res, next) => {
       }
     };
 
-    // 7. Supabase Database Persistence (if requested directly via backend API)
+    // 7. Save to persistent medicalReportStore with physical file copy
+    try {
+      medicalReportStore.saveReport(userId, report, uploadedTempPath);
+    } catch (storeErr) {
+      console.warn('medicalController: medicalReportStore save notice:', storeErr.message);
+    }
+
+    // 8. Supabase Database Persistence (if requested directly via backend API)
     let supabaseSaved = false;
     const token = req.token;
     const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
@@ -284,56 +292,84 @@ exports.uploadMedicalReport = async (req, res, next) => {
 
 // ═══════════════════════════════════════════════════════════════
 //  GET /api/medical/reports
-//  Queries Supabase PostgreSQL exclusively
+//  Queries resilient medicalReportStore & Supabase PostgreSQL
 // ═══════════════════════════════════════════════════════════════
 exports.getMedicalReports = async (req, res, next) => {
   try {
     const userId = req.user?.id || req.user?.uid || 'guest_user';
     const token = req.token;
 
+    let sbReports = [];
     const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
-    if (!client || !isValidUUID(userId)) {
-      return res.status(200).json({ success: true, count: 0, reports: [] });
+    if (client && isValidUUID(userId)) {
+      try {
+        const { data: sbData, error: sbErr } = await client
+          .from('medical_reports')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false });
+
+        if (!sbErr && Array.isArray(sbData)) {
+          sbReports = sbData;
+        } else if (sbErr) {
+          console.warn('medicalController: Supabase reports select notice:', sbErr.message);
+        }
+      } catch (sbEx) {
+        console.warn('medicalController: Supabase query exception:', sbEx.message);
+      }
     }
 
-    const { data: sbReports, error: sbErr } = await client
-      .from('medical_reports')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    // Retrieve from persistent medicalReportStore
+    let localReports = [];
+    try {
+      localReports = medicalReportStore.getReportsByUserId(userId);
+    } catch (_) {}
 
-    if (sbErr) {
-      console.warn('medicalController: Supabase reports select error:', sbErr.message);
-      return res.status(200).json({ success: true, count: 0, reports: [] });
-    }
+    // Merge and deduplicate by report ID
+    const seenIds = new Set();
+    const mergedRaw = [];
+    (localReports || []).forEach(r => {
+      const rId = r.id || r._id;
+      if (rId && !seenIds.has(rId)) {
+        seenIds.add(rId);
+        mergedRaw.push(r);
+      }
+    });
+    (sbReports || []).forEach(r => {
+      const rId = r.id || r._id;
+      if (rId && !seenIds.has(rId)) {
+        seenIds.add(rId);
+        mergedRaw.push(r);
+      }
+    });
 
-    const reports = (sbReports || []).map(r => ({
-      id: r.id,
-      _id: r.id,
-      userId: r.user_id,
-      user_id: r.user_id,
-      reportName: r.report_name,
-      report_name: r.report_name,
-      filename: r.original_filename || r.report_name,
-      originalName: r.original_filename || r.report_name,
-      original_filename: r.original_filename || r.report_name,
-      storagePath: r.storage_path,
-      storage_path: r.storage_path,
-      storageProvider: 'supabase',
-      fileUrl: r.file_url,
-      downloadUrl: r.file_url,
-      previewUrl: r.file_url,
-      mimeType: r.mime_type,
-      fileSize: r.file_size_bytes,
-      uploadDate: r.created_at,
-      uploadedAt: r.created_at,
-      uploadedAtIso: r.created_at,
-      notes: r.notes,
-      ocrConfidence: r.ocr_confidence,
-      documentType: r.document_type,
-      processingStatus: r.processing_status,
-      rawOcrText: r.raw_ocr_text,
-      extractedData: r.extracted_data || {},
+    const reports = mergedRaw.map(r => ({
+      id: r.id || r._id,
+      _id: r.id || r._id,
+      userId: r.user_id || r.userId,
+      user_id: r.user_id || r.userId,
+      reportName: r.report_name || r.reportName || r.original_filename || 'Medical Report',
+      report_name: r.report_name || r.reportName || r.original_filename || 'Medical Report',
+      filename: r.original_filename || r.originalName || r.filename || r.report_name || 'report.pdf',
+      originalName: r.original_filename || r.originalName || r.filename || r.report_name || 'report.pdf',
+      original_filename: r.original_filename || r.originalName || r.filename || r.report_name || 'report.pdf',
+      storagePath: r.storage_path || r.storagePath || '',
+      storage_path: r.storage_path || r.storagePath || '',
+      storageProvider: r.storageProvider || 'supabase',
+      fileUrl: r.file_url || r.fileUrl || '',
+      downloadUrl: r.downloadUrl || r.file_url || '',
+      previewUrl: r.previewUrl || r.file_url || '',
+      mimeType: r.mime_type || r.mimeType || 'application/pdf',
+      fileSize: r.file_size_bytes || r.fileSize || 0,
+      uploadDate: r.created_at || r.uploadDate || new Date().toISOString(),
+      uploadedAt: r.created_at || r.uploadedAt || new Date().toISOString(),
+      uploadedAtIso: r.created_at || r.uploadedAtIso || new Date().toISOString(),
+      notes: r.notes || '',
+      ocrConfidence: r.ocr_confidence || r.ocrConfidence || 95,
+      documentType: r.document_type || r.documentType || 'digital_pdf',
+      processingStatus: r.processing_status || r.processingStatus || 'completed',
+      rawOcrText: r.raw_ocr_text || r.rawOcrText || '',
+      extractedData: r.extracted_data || r.extractedData || {},
       analysis: r.analysis || {}
     }));
 
@@ -354,53 +390,59 @@ exports.getMedicalReport = async (req, res, next) => {
   try {
     const { reportId } = req.params;
     const userId = req.user?.id || req.user?.uid || 'guest_user';
-    const token = req.token;
 
-    const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
-    if (!client || !isValidUUID(reportId) || !isValidUUID(userId)) {
-      return res.status(404).json({ success: false, message: 'Report not found.' });
+    // 1. Check local persistent medicalReportStore
+    let r = medicalReportStore.getReportById(reportId);
+
+    // 2. Check Supabase if not found locally
+    if (!r) {
+      const token = req.token;
+      const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
+      if (client && isValidUUID(reportId)) {
+        try {
+          const { data: sbData } = await client
+            .from('medical_reports')
+            .select('*')
+            .eq('id', reportId)
+            .maybeSingle();
+          if (sbData) r = sbData;
+        } catch (_) {}
+      }
     }
 
-    const { data: r, error } = await client
-      .from('medical_reports')
-      .select('*')
-      .eq('id', reportId)
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    if (error || !r) {
+    if (!r) {
       return res.status(404).json({ success: false, message: 'Report not found.' });
     }
 
     return res.status(200).json({
       success: true,
       report: {
-        id: r.id,
-        _id: r.id,
-        userId: r.user_id,
-        user_id: r.user_id,
-        reportName: r.report_name,
-        report_name: r.report_name,
-        filename: r.original_filename || r.report_name,
-        originalName: r.original_filename || r.report_name,
-        original_filename: r.original_filename || r.report_name,
-        storagePath: r.storage_path,
-        storage_path: r.storage_path,
-        storageProvider: 'supabase',
-        fileUrl: r.file_url,
-        downloadUrl: r.file_url,
-        previewUrl: r.file_url,
-        mimeType: r.mime_type,
-        fileSize: r.file_size_bytes,
-        uploadDate: r.created_at,
-        uploadedAt: r.created_at,
-        uploadedAtIso: r.created_at,
-        notes: r.notes,
-        ocrConfidence: r.ocr_confidence,
-        documentType: r.document_type,
-        processingStatus: r.processing_status,
-        rawOcrText: r.raw_ocr_text,
-        extractedData: r.extracted_data || {},
+        id: r.id || r._id,
+        _id: r.id || r._id,
+        userId: r.user_id || r.userId,
+        user_id: r.user_id || r.userId,
+        reportName: r.report_name || r.reportName || r.original_filename || 'Medical Report',
+        report_name: r.report_name || r.reportName || r.original_filename || 'Medical Report',
+        filename: r.original_filename || r.filename || 'report.pdf',
+        originalName: r.original_filename || r.filename || 'report.pdf',
+        original_filename: r.original_filename || r.filename || 'report.pdf',
+        storagePath: r.storage_path || r.storagePath || '',
+        storage_path: r.storage_path || r.storagePath || '',
+        storageProvider: r.storageProvider || 'supabase',
+        fileUrl: r.file_url || r.fileUrl || '',
+        downloadUrl: r.downloadUrl || r.file_url || '',
+        previewUrl: r.previewUrl || r.file_url || '',
+        mimeType: r.mime_type || r.mimeType || 'application/pdf',
+        fileSize: r.file_size_bytes || r.fileSize || 0,
+        uploadDate: r.created_at || r.uploadDate,
+        uploadedAt: r.created_at || r.uploadedAt,
+        uploadedAtIso: r.created_at || r.uploadedAtIso,
+        notes: r.notes || '',
+        ocrConfidence: r.ocr_confidence || r.ocrConfidence || 95,
+        documentType: r.document_type || r.documentType || 'digital_pdf',
+        processingStatus: r.processing_status || r.processingStatus || 'completed',
+        rawOcrText: r.raw_ocr_text || r.rawOcrText || '',
+        extractedData: r.extracted_data || r.extractedData || {},
         analysis: r.analysis || {}
       }
     });
@@ -416,38 +458,35 @@ exports.deleteMedicalReport = async (req, res, next) => {
   try {
     const { reportId } = req.params;
     const userId = req.user?.id || req.user?.uid || 'guest_user';
+
+    // Delete from persistent store
+    medicalReportStore.deleteReport(userId, reportId);
+
+    // Delete from Supabase if client accessible
     const token = req.token;
-
     const client = (token ? getUserSupabaseClient(token) : null) || getSupabaseAdmin() || getSupabaseClient();
-    if (!client || !isValidUUID(reportId) || !isValidUUID(userId)) {
-      return res.status(200).json({ success: true, message: 'Report deleted successfully' });
-    }
+    if (client && isValidUUID(reportId) && isValidUUID(userId)) {
+      try {
+        const { data: existingReport } = await client
+          .from('medical_reports')
+          .select('storage_path')
+          .eq('id', reportId)
+          .eq('user_id', userId)
+          .maybeSingle();
 
-    // 1. Fetch storage_path before deleting record
-    const { data: existingReport } = await client
-      .from('medical_reports')
-      .select('storage_path')
-      .eq('id', reportId)
-      .eq('user_id', userId)
-      .maybeSingle();
+        await client
+          .from('medical_reports')
+          .delete()
+          .eq('id', reportId)
+          .eq('user_id', userId);
 
-    // 2. Delete database record
-    await client
-      .from('medical_reports')
-      .delete()
-      .eq('id', reportId)
-      .eq('user_id', userId);
-
-    // 3. Delete physical storage asset from Supabase Storage bucket 'medical-reports'
-    if (existingReport?.storage_path) {
-      const cleanPath = existingReport.storage_path.startsWith('medical-reports/')
-        ? existingReport.storage_path.replace(/^medical-reports\//, '')
-        : existingReport.storage_path;
-
-      await client.storage
-        .from('medical-reports')
-        .remove([cleanPath])
-        .catch(() => {});
+        if (existingReport?.storage_path) {
+          const cleanPath = existingReport.storage_path.startsWith('medical-reports/')
+            ? existingReport.storage_path.replace(/^medical-reports\//, '')
+            : existingReport.storage_path;
+          await client.storage.from('medical-reports').remove([cleanPath]).catch(() => {});
+        }
+      } catch (_) {}
     }
 
     return res.status(200).json({ success: true, message: 'Report deleted successfully' });

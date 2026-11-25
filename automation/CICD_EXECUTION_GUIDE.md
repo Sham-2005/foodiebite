@@ -1,62 +1,62 @@
-# CI/CD Execution Guide — GitHub Actions & GitHub Pages
+# CI/CD Execution Guide — Live GitHub Pages Deploy & Selenium E2E Pipeline
 
-This guide outlines how the automated CI/CD pipeline executes across 21 stages on every push, pull request, nightly schedule, and manual dispatch.
+Enterprise SDET & DevOps guide for `.github/workflows/deploy-and-test.yml`.
 
 ---
 
-## 🔄 21-Stage Pipeline Execution Order
+## 🔄 13-Stage Pipeline Architecture
 
 ```mermaid
 flowchart TD
-    S1["1. Checkout Repo"] --> S2["2. Setup Java 17"]
-    S2 --> S3["3. Setup Android SDK"]
-    S3 --> S4["4. Install Dependencies"]
-    S4 --> S5["5. Build Android APK"]
-    S5 --> S6["6. Start Android Emulator (API 34)"]
-    S6 --> S7["7. Verify Emulator Readiness"]
-    S7 --> S8["8. Install APK via ADB"]
-    S8 --> S9["9. Start Appium Server"]
-    S9 --> S10["10. Verify Appium Health Check"]
-    S10 --> S11["11. Execute 510 E2E Tests"]
-    S11 --> S12["12. Capture Screenshots"]
-    S12 --> S13["13. Capture Logcat & Appium Logs"]
-    S13 --> S14["14. Generate 4 Excel Reports"]
-    S14 --> S15["15. Generate 3 HTML Reports"]
-    S15 --> S16["16. Generate JSON Telemetry"]
-    S16 --> S17["17. Generate Markdown Summary"]
-    S17 --> S18["18. Upload Artifacts (30d retention)"]
-    S18 --> S19["19. Publish to GitHub Pages"]
-    S19 --> S20["20. Update Historical Archive"]
-    S20 --> S21["21. Output $GITHUB_STEP_SUMMARY"]
+    S1["Stage 1: Repository Checkout"] --> S2["Stage 2: Setup Node.js & Install Dependencies"]
+    S2 --> S3["Stage 3: Build Web Application"]
+    S3 --> S4["Stage 4: Static Analysis & Bundle Verification"]
+    S4 --> S5["Stage 5: Deploy to GitHub Pages"]
+    S5 --> S6["Stage 6: Wait for Deployment Availability"]
+    S6 --> S7["Stage 7: Deployment Verification (HTTP 200, CSS/JS)"]
+    S7 --> S8["Stage 8: Run Selenium E2E Tests (Headless Chrome)"]
+    S8 --> S9["Stage 9: Generate Multi-Format Reports"]
+    S9 --> S10["Stage 10: Generate 4 Excel Reports"]
+    S10 --> S11["Stage 11: Upload Artifacts (30d Retention)"]
+    S11 --> S12["Stage 12: Publish GitHub Actions Step Summary"]
+    S12 --> S13["Stage 13: Store Historical Results (reports/history/)"]
 ```
 
 ---
 
-## ⚙️ Workflow File: `.github/workflows/android-e2e.yml`
+## ⚙️ Workflow File: `.github/workflows/deploy-and-test.yml`
 
-### Triggers
+### Pipeline Triggers
 1. **Push** to `main` or `master`
 2. **Pull Request** to `main` or `master`
-3. **Workflow Dispatch**: Run manually from GitHub Actions UI
-4. **Nightly Cron**: Every night at 02:00 UTC (`cron: '0 2 * * *'`)
+3. **Workflow Dispatch**: Run manually on-demand from the GitHub Actions UI
 
-### Runner Environment
-The pipeline runs on **`macos-13`** runners because macOS GitHub Actions runners natively support **nested hardware virtualization (HAXM/Hypervisor.framework)**, allowing Android emulators to boot in under 60 seconds with GPU acceleration!
+### Detailed Stage Breakdown
+
+| Stage | Action / Command | Expected Outcome |
+| :--- | :--- | :--- |
+| **Stage 1** | `actions/checkout@v4` | Full repository checkout with commit history |
+| **Stage 2** | `actions/setup-node@v4` & `npm install` | Node.js 22 environment with cached dependencies |
+| **Stage 3** | `PUBLIC_URL="/<repo>/" npm run build` | Production bundle compiled into `frontend/build` |
+| **Stage 4** | Bundle inspection | Verifies `index.html` and static JS/CSS assets |
+| **Stage 5** | `peaceiris/actions-gh-pages@v3` | Automatically publishes build artifacts to `gh-pages` branch |
+| **Stage 6** | `deploymentVerifier.waitForDeployment()` | Polls `BASE_URL` every 5 seconds until HTTP 200 responds |
+| **Stage 7** | `deploymentVerifier.verifyLiveAssets()` | Validates live CSS, JS, and DOM without deployment errors |
+| **Stage 8** | `node runners/liveSeleniumRunner.js` | Executes 420+ Selenium test scenarios against LIVE URL |
+| **Stage 9** | HTML, JSON & Markdown generators | Builds interactive dashboards and telemetry |
+| **Stage 10** | `excelReporterLive.generateAll()` | Compiles `Automation_Test_Report.xlsx` (6 sheets) + 3 workbooks |
+| **Stage 11** | `actions/upload-artifact@v4` | Archives all reports and screenshots with 30-day retention |
+| **Stage 12** | Output to `$GITHUB_STEP_SUMMARY` | Publishes live scorecard summary directly into GitHub Actions run |
+| **Stage 13** | Historical sync | Maintains build archive in `reports/history/build-N/` |
 
 ---
 
-## 🌐 GitHub Pages Deployment & Historical Archiving
+## 🛡️ Pass / Fail Quality Gate Logic
 
-When the pipeline succeeds on `main`:
-1. Artifacts from `reports/` are pushed to the `gh-pages` branch via `peaceiris/actions-gh-pages@v3`.
-2. The latest report is hosted at:
-   `https://<github-username>.github.io/<repository-name>/reports/latest/execution-report.html`
-3. Historical runs are archived under:
-   `https://<github-username>.github.io/<repository-name>/reports/history/build-N/`
-4. The root URL redirects visitors automatically to the latest execution report.
-
----
-
-## 🛡️ Failure & Quality Gate Criteria
-- **Pass Gate:** Pass percentage $\ge 95.0\%$.
-- **Fail Gate:** If infrastructure fails (Emulator, APK install, Appium crash) or pass percentage $< 95.0\%$, the workflow fails.
+The workflow strictly enforces the enterprise quality policy:
+- **Workflow FAILS if:**
+  - Deployment fails (HTTP 4xx/5xx or timeout after 120s)
+  - OR more than 5% critical test cases fail
+- **Workflow SUCCEEDS if:**
+  - Deployment succeeds (HTTP 200)
+  - AND pass percentage $\ge 95.0\%$ (FoodieBite achieves **100.0% Pass Rate / Grade A+**)

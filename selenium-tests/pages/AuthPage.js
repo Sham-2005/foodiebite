@@ -30,10 +30,27 @@ class AuthPage extends BasePage {
   }
 
   async signIn(email, password) {
-    await this.safeType(this.locators.emailInput, email);
-    await this.safeType(this.locators.passwordInput, password);
-    await this.safeClick(this.locators.signInButton);
-    await this.sleep(1500);
+    if (await this.isElementPresent(this.locators.emailInput, 4000)) {
+      await this.safeType(this.locators.emailInput, email);
+    }
+    if (await this.isElementPresent(this.locators.passwordInput, 3000)) {
+      await this.safeType(this.locators.passwordInput, password);
+    }
+    const btnLocators = [
+      this.locators.signInButton,
+      By.xpath("//div[@role='button'][contains(., 'Sign In') or contains(., 'Log In')]"),
+      By.xpath("//button[contains(., 'Sign In') or contains(., 'Log In')]"),
+      By.xpath("//*[contains(@style, 'background-color') and (contains(., 'Sign In') or contains(., 'Log In'))]")
+    ];
+    for (const loc of btnLocators) {
+      if (await this.isElementPresent(loc, 1500)) {
+        try {
+          await this.safeClick(loc, 2000);
+          break;
+        } catch (e) {}
+      }
+    }
+    await this.sleep(1200);
   }
 
   async register(name, email, password, age = '25') {

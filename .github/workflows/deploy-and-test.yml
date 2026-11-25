@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build-deploy-and-test:
-    name: Build, Deploy to Pages, Verify & Run 400+ Live Selenium Tests
+    name: Enterprise CI/CD - Build, Deploy, Verify & Live Selenium E2E
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -32,8 +32,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Stage 2: Setup Node.js & Install Dependencies
-      - name: Stage 2 - Setup Node.js 22 & Install Dependencies
+      # Stage 2: Dependency Installation
+      - name: Stage 2 - Setup Node.js & Install Dependencies
         uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -50,21 +50,23 @@ jobs:
           npm install
 
       # Stage 3: Build Application
-      - name: Stage 3 - Build Web Application for GitHub Pages
+      - name: Stage 3 - Build Application
         run: |
+          echo "Building production web application for GitHub Pages with BASE_URL path..."
           cd frontend
           PUBLIC_URL="/${{ github.event.repository.name }}/" npm run build
           ls -la build/
 
       # Stage 4: Static Analysis
-      - name: Stage 4 - Static Analysis & Bundle Inspection
+      - name: Stage 4 - Static Analysis
         run: |
-          echo "Inspecting generated production assets in frontend/build..."
-          test -f frontend/build/index.html || exit 1
-          echo "Build artifact verified. Static analysis passed."
+          echo "Verifying generated production bundle assets..."
+          test -f frontend/build/index.html || (echo "FATAL: index.html not found in build artifact" && exit 1)
+          test -d frontend/build/static || (echo "FATAL: static bundle directory missing" && exit 1)
+          echo "Static analysis and bundle verification passed."
 
       # Stage 5: Deploy to GitHub Pages
-      - name: Stage 5 - Deploy Application to GitHub Pages
+      - name: Stage 5 - Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: peaceiris/actions-gh-pages@v3
         with:
@@ -73,31 +75,47 @@ jobs:
           destination_dir: ./
           keep_files: true
 
-      # Stage 6 & 7: Wait for Deployment & Deployment Verification
-      - name: Stage 6 & 7 - Wait for Deployment & Validate Live Assets
+      # Stage 6: Wait for Deployment
+      - name: Stage 6 - Wait for Deployment
         run: |
-          echo "Configured Live Target URL: $BASE_URL"
+          echo "Configured Live Deployment Target URL: $BASE_URL"
           cd automation
           node -e "
             const verifier = require('./utils/deploymentVerifier');
             verifier.waitForDeployment(120, 5).then(() => {
-              return verifier.verifyLiveAssets();
-            }).then(() => {
-              console.log('Stage 6 & 7 verification complete.');
+              console.log('Stage 6 - Deployment endpoint responded successfully.');
             }).catch(err => {
-              console.error('Deployment verification notice:', err.message);
+              console.warn('Deployment poll note:', err.message);
             });
           "
 
-      # Stage 8, 9, 10, 13: Run Selenium E2E Tests against LIVE Deployed URL & Generate Reports
-      - name: Stage 8-10, 13 - Execute 400+ Live Selenium Tests & Generate Multi-Format Reports
+      # Stage 7: Deployment Verification
+      - name: Stage 7 - Deployment Verification
         run: |
-          echo "Executing Selenium tests strictly against LIVE URL: $BASE_URL"
+          cd automation
+          node -e "
+            const verifier = require('./utils/deploymentVerifier');
+            verifier.verifyLiveAssets().then(diag => {
+              console.log('Stage 7 - Deployment Verification Diagnostics:', JSON.stringify(diag, null, 2));
+              if (diag.httpStatus >= 400) {
+                console.error('Deployment verification failed with HTTP ' + diag.httpStatus);
+                process.exit(1);
+              }
+            });
+          "
+
+      # Stage 8: Run Selenium E2E Tests
+      # Stage 9: Generate Reports
+      # Stage 10: Generate Excel Reports
+      # Stage 13: Store Historical Results
+      - name: Stage 8-10, 13 - Run Selenium E2E Tests & Compile Reports
+        run: |
+          echo "MANDATORY POLICY: Strictly prohibiting localhost. Executing against: $BASE_URL"
           cd automation
           node runners/liveSeleniumRunner.js
 
       # Stage 11: Upload Artifacts (Retention: 30 Days)
-      - name: Stage 11 - Upload All Test & Quality Artifacts (30 Days Retention)
+      - name: Stage 11 - Upload Artifacts (30 Days Retention)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -107,8 +125,8 @@ jobs:
             reports/
           retention-days: 30
 
-      # Stage 12: Publish GitHub Actions Step Summary
-      - name: Stage 12 - Publish GitHub Actions Summary
+      # Stage 12: Publish Summary
+      - name: Stage 12 - Publish Summary to GitHub Actions Step Summary
         if: always()
         run: |
           if [ -f "Test Results/Summary/summary.md" ]; then

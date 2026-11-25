@@ -15,6 +15,19 @@ class DriverFactory {
 
     const chromeOptions = new chrome.Options();
     
+    // Auto-detect Chrome binary on Windows / common paths
+    const possiblePaths = [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      (process.env.LOCALAPPDATA || '') + '\\Google\\Chrome\\Application\\chrome.exe'
+    ];
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        chromeOptions.setChromeBinaryPath(p);
+        break;
+      }
+    }
+
     // Modern headless flag
     if (isHeadless) {
       chromeOptions.addArguments('--headless=new');

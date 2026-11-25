@@ -28,13 +28,17 @@ async function syncToGitHubPages(metrics) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   });
 
-  // Copy HTML reports, summary, and artifacts to reports/latest/ and history/
+  // Copy HTML reports, Excel workbooks, summary, and artifacts to reports/latest/ and history/
   const filesToCopy = [
     { src: path.join(config.paths.htmlDir, 'execution-report.html'), name: 'execution-report.html' },
     { src: path.join(config.paths.htmlDir, 'dashboard.html'), name: 'dashboard.html' },
     { src: path.join(config.paths.htmlDir, 'trends.html'), name: 'trends.html' },
     { src: path.join(config.paths.summaryDir, 'summary.md'), name: 'summary.md' },
-    { src: path.join(config.paths.jsonDir, 'execution-results.json'), name: 'execution-results.json' }
+    { src: path.join(config.paths.jsonDir, 'execution-results.json'), name: 'execution-results.json' },
+    { src: path.join(config.paths.excelDir, 'Automation_Test_Report.xlsx'), name: 'Automation_Test_Report.xlsx' },
+    { src: path.join(config.paths.excelDir, 'Passed_Test_Cases.xlsx'), name: 'Passed_Test_Cases.xlsx' },
+    { src: path.join(config.paths.excelDir, 'Failed_Test_Cases.xlsx'), name: 'Failed_Test_Cases.xlsx' },
+    { src: path.join(config.paths.excelDir, 'Execution_Summary.xlsx'), name: 'Execution_Summary.xlsx' }
   ];
 
   filesToCopy.forEach(f => {
