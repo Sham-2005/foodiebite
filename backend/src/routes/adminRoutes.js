@@ -106,6 +106,13 @@ router.put('/users/:id', adminController.updateUser);
 router.put('/users/:id/disable', adminController.disableUser);
 router.delete('/users/:id', adminController.deleteUser);
 
+// User Medical Reports & Intelligence
+router.get('/users/:id/medical-reports', adminController.getUserMedicalReports);
+router.get('/users/:id/medical-reports/:reportId', adminController.getUserMedicalReportById);
+router.post('/users/:id/medical-reports/:reportId/analyze', adminController.analyzeUserMedicalReport);
+router.get('/users/:id/medical-reports/:reportId/view', adminController.viewUserMedicalReport);
+router.delete('/users/:id/medical-reports/:reportId', adminController.deleteUserMedicalReport);
+
 // Admin notification settings routes
 router.get('/settings/notifications', adminController.getNotificationSettings);
 router.post('/settings/notifications', adminController.updateNotificationSettings);
@@ -124,7 +131,12 @@ router.delete('/feedback/:id', adminController.deleteFeedback);
 router.get('/ai-logs', adminController.getAiLogs);
 router.get('/analytics', adminController.getAnalytics);
 
-// Restaurant request review and approval endpoints
+// Admin Food Database Management routes
+router.get('/foods/stats', adminController.getFoodDatabaseStats);
+router.get('/foods/:id', adminController.getFoodDatabaseItemById);
+router.get('/foods', adminController.getAllFoodsDatabase);
+
+// Restaurant request review and approval endpoints (preserved for API compatibility)
 router.get('/restaurant-requests', adminController.getRestaurantRequests);
 router.get('/restaurant-requests/:id', adminController.getRestaurantRequestById);
 router.post('/restaurant-requests/:id/approve', adminController.approveRestaurantRequest);

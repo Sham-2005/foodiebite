@@ -15,6 +15,17 @@ const {
   getAdminAuditLogs,
   getReportingDateKey
 } = require('../services/activityTrackingService');
+const {
+  buildStructuredTestResults,
+  calculateSummaryCards,
+  generateMedicalReportIntelligence,
+  MEDICAL_DISCLAIMER
+} = require('../services/medicalReportAiService');
+const {
+  queryFoodDatabase,
+  getFoodDatabaseStats,
+  getFoodItemById
+} = require('../services/foodDatabaseService');
 
 // In-memory cache for overview metrics (TTL: 3 minutes)
 let overviewMetricsCache = null;
@@ -58,28 +69,81 @@ async function fetchCombinedUsers(forceRefresh = false) {
   }
 
   const client = getClient();
-  if (!client) return [];
-
-  const { data: profiles, error } = await client
-    .from('profiles')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    console.error('❌ [fetchCombinedUsers] Supabase profiles fetch error:', error.message);
-    return [];
+  let profiles = [];
+  if (client) {
+    try {
+      const { data, error } = await client
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && Array.isArray(data)) {
+        profiles = data;
+      }
+    } catch (e) {
+      console.warn('Supabase profiles query notice:', e.message);
+    }
   }
+
+  // Merge with persisted userStore
+  let storeUsers = [];
+  try {
+    const userStore = require('../services/userStore');
+    storeUsers = userStore.getAllUsers ? userStore.getAllUsers() : [];
+  } catch (_) {}
+
+  const seenIds = new Set(profiles.map(p => p.id));
+  const seenEmails = new Set(profiles.map(p => (p.email || '').toLowerCase().trim()));
+  const mergedProfiles = [...profiles];
+
+  storeUsers.forEach(u => {
+    const uEmail = (u.email || '').toLowerCase().trim();
+    const uId = u.id || u.uid;
+    if (!seenIds.has(uId) && !seenEmails.has(uEmail)) {
+      seenIds.add(uId);
+      seenEmails.add(uEmail);
+      mergedProfiles.push({
+        id: uId,
+        name: u.name,
+        email: u.email,
+        created_at: u.createdAt,
+        updated_at: u.lastActiveAt,
+        role: u.role || 'user',
+        disabled: Boolean(u.disabled),
+        diet_type: u.dietType || 'Vegetarian',
+        preferences: {
+          dietType: u.dietType || 'Vegetarian',
+          cuisines: u.cuisines || [],
+          spiceLevel: u.spiceLevel || 'Medium',
+          healthGoals: u.healthGoals || [],
+          allergies: u.allergies || []
+        }
+      });
+    }
+  });
 
   // Count favorites per user
   const favCounts = {};
-  try {
-    const { data: favs } = await client.from('user_favorites').select('user_id');
-    (favs || []).forEach(f => {
-      favCounts[f.user_id] = (favCounts[f.user_id] || 0) + 1;
-    });
-  } catch (_) {}
+  if (client) {
+    try {
+      const { data: favs } = await client.from('user_favorites').select('user_id');
+      (favs || []).forEach(f => {
+        favCounts[f.user_id] = (favCounts[f.user_id] || 0) + 1;
+      });
+    } catch (_) {}
+  }
 
-  const finalUsers = (profiles || []).map(p => {
+  // Count medical reports per user
+  const medCounts = {};
+  if (client) {
+    try {
+      const { data: medData } = await client.from('medical_reports').select('user_id');
+      (medData || []).forEach(m => {
+        if (m.user_id) medCounts[m.user_id] = (medCounts[m.user_id] || 0) + 1;
+      });
+    } catch (_) {}
+  }
+
+  const finalUsers = mergedProfiles.map(p => {
     const prefs = p.preferences || {};
     return {
       id: p.id,
@@ -100,6 +164,7 @@ async function fetchCombinedUsers(forceRefresh = false) {
       healthGoals: prefs.healthGoals || [],
       allergies: prefs.allergies || [],
       favoritesCount: favCounts[p.id] || 0,
+      medicalReportsCount: medCounts[p.id] || 0,
       profileMissing: false
     };
   });
@@ -218,22 +283,51 @@ exports.getUserById = async (req, res, next) => {
   try {
     const { id } = req.params;
     const client = getClient();
-    if (!client) {
-      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
+
+    let finalProfile = null;
+    if (client) {
+      try {
+        const { data: profileDoc } = await client
+          .from('profiles')
+          .select('*')
+          .eq('id', id)
+          .maybeSingle();
+        if (profileDoc) finalProfile = profileDoc;
+      } catch (_) {}
     }
 
-    const { data: profileDoc, error: pErr } = await client
-      .from('profiles')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
+    if (!finalProfile) {
+      try {
+        const userStore = require('../services/userStore');
+        const storeUser = userStore.getUserById(id) || userStore.findByEmail(id);
+        if (storeUser) {
+          finalProfile = {
+            id: storeUser.id || storeUser.uid,
+            name: storeUser.name,
+            email: storeUser.email,
+            created_at: storeUser.createdAt,
+            updated_at: storeUser.lastActiveAt,
+            role: storeUser.role || 'user',
+            disabled: Boolean(storeUser.disabled),
+            diet_type: storeUser.dietType || 'Vegetarian',
+            preferences: {
+              dietType: storeUser.dietType || 'Vegetarian',
+              cuisines: storeUser.cuisines || [],
+              spiceLevel: storeUser.spiceLevel || 'Medium',
+              healthGoals: storeUser.healthGoals || [],
+              allergies: storeUser.allergies || []
+            }
+          };
+        }
+      } catch (_) {}
+    }
 
-    if (pErr || !profileDoc) {
+    if (!finalProfile) {
       return res.status(404).json({ success: false, message: 'User account not found' });
     }
 
-    const userEmail = (profileDoc.email || '').toLowerCase().trim();
-    const prefs = profileDoc.preferences || {};
+    const userEmail = (finalProfile.email || '').toLowerCase().trim();
+    const prefs = finalProfile.preferences || {};
 
     // 1. Sent Emails for this User from public.email_delivery_logs
     const sentEmails = [];
@@ -261,23 +355,23 @@ exports.getUserById = async (req, res, next) => {
 
     // 2. Real Activities for this User
     const realActivities = [];
-    if (profileDoc.created_at) {
+    if (finalProfile.created_at) {
       realActivities.push({
         id: `act_reg_${id}`,
         type: 'registration',
         title: 'Account Registered',
         details: `Account registered in Supabase with email ${userEmail}`,
-        timestamp: new Date(profileDoc.created_at).toISOString()
+        timestamp: new Date(finalProfile.created_at).toISOString()
       });
     }
 
-    if (profileDoc.updated_at) {
+    if (finalProfile.updated_at) {
       realActivities.push({
         id: `act_update_${id}`,
         type: 'preference_update',
         title: 'Profile Updated',
-        details: `Dietary preference set to ${profileDoc.diet_type || prefs.dietType || 'Vegetarian'}`,
-        timestamp: new Date(profileDoc.updated_at).toISOString()
+        details: `Dietary preference set to ${finalProfile.diet_type || prefs.dietType || 'Vegetarian'}`,
+        timestamp: new Date(finalProfile.updated_at).toISOString()
       });
     }
 
@@ -311,23 +405,34 @@ exports.getUserById = async (req, res, next) => {
       favCount = count || 0;
     } catch (_) {}
 
+    // User medical reports count
+    let medReportsCount = 0;
+    try {
+      const { count } = await client
+        .from('medical_reports')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', id);
+      medReportsCount = count || 0;
+    } catch (_) {}
+
     const userDetails = {
       id: id,
       uid: id,
-      name: profileDoc.name || profileDoc.full_name || (userEmail ? userEmail.split('@')[0] : 'User'),
+      name: finalProfile.name || finalProfile.full_name || (userEmail ? userEmail.split('@')[0] : 'User'),
       email: userEmail,
       emailVerified: true,
-      createdAt: profileDoc.created_at || null,
-      lastSignInTime: profileDoc.updated_at || null,
-      lastActiveAt: profileDoc.updated_at || null,
-      disabled: Boolean(profileDoc.disabled),
-      role: profileDoc.role || 'user',
-      dietType: profileDoc.diet_type || prefs.dietType || 'Vegetarian',
+      createdAt: finalProfile.created_at || null,
+      lastSignInTime: finalProfile.updated_at || null,
+      lastActiveAt: finalProfile.updated_at || null,
+      disabled: Boolean(finalProfile.disabled),
+      role: finalProfile.role || 'user',
+      dietType: finalProfile.diet_type || prefs.dietType || 'Vegetarian',
       cuisines: prefs.cuisines || [],
       spiceLevel: prefs.spiceLevel || 'Medium',
       healthGoals: prefs.healthGoals || [],
       allergies: prefs.allergies || [],
       favoritesCount: favCount,
+      medicalReportsCount: medReportsCount,
       emails: sentEmails,
       activities: realActivities,
       recentActivity: realActivities.slice(0, 10),
@@ -780,10 +885,58 @@ exports.getAuditLogs = async (req, res, next) => {
 
 exports.getAllReports = async (req, res, next) => {
   try {
+    const client = getClient();
+    if (!client) {
+      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
+    }
+
+    const { data: rawReports, error: rErr } = await client
+      .from('medical_reports')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (rErr) {
+      return res.status(500).json({ success: false, message: rErr.message });
+    }
+
+    // Fetch user profiles to attach user email/name
+    const { data: profiles } = await client.from('profiles').select('id, name, email');
+    const profileMap = new Map((profiles || []).map(p => [p.id, p]));
+
+    const reports = (rawReports || []).map(r => {
+      const user = profileMap.get(r.user_id) || {};
+      const testResults = buildStructuredTestResults(r.analysis || {}, r.raw_ocr_text || '');
+      const summaryCards = calculateSummaryCards(testResults);
+      const isFailed = r.processing_status === 'ocr_failed' || r.analysis?.analysisFailed;
+      const isCompleted = Boolean(r.analysis && (r.analysis.summary || r.analysis.healthSummary || r.analysis.intelligence));
+      const statusIndicator = isFailed ? 'Analysis Failed' : (isCompleted ? 'Analysis Completed' : 'Not Analyzed');
+
+      return {
+        id: r.id,
+        userId: r.user_id,
+        userEmail: user.email || 'Unknown',
+        userName: user.name || 'User',
+        reportName: r.report_name || r.original_filename || 'Medical Report',
+        originalFilename: r.original_filename || 'report.pdf',
+        mimeType: r.mime_type || 'application/pdf',
+        fileSizeBytes: r.file_size_bytes || 0,
+        uploadDate: r.created_at,
+        documentType: r.document_type || 'digital_pdf',
+        processingStatus: r.processing_status || 'completed',
+        statusIndicator,
+        summaryCards,
+        hasAnalysis: isCompleted,
+        analysisSummary: r.analysis?.summary || 'Report processed and stored securely.',
+        disclaimer: MEDICAL_DISCLAIMER
+      };
+    });
+
+    await logAdminAudit(req.user, 'ADMIN_VIEW_ALL_REPORTS', { totalReports: reports.length });
+
     res.status(200).json({
       success: true,
-      reports: [],
-      message: 'Medical reports are private personal health records and are not accessible to administrators.'
+      count: reports.length,
+      reports
     });
   } catch (err) {
     if (next) next(err);
@@ -1081,6 +1234,447 @@ exports.updateNotificationSettings = async (req, res, next) => {
       success: true,
       message: 'Notification settings saved successfully to Supabase.',
       settings: updated
+    });
+  } catch (err) {
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  ADMIN MEDICAL REPORTS & CLINICAL INTELLIGENCE CONTROLLERS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/admin/users/:id/medical-reports
+ * List all medical reports for a specific user with structured summary
+ */
+exports.getUserMedicalReports = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const client = getClient();
+    if (!client) {
+      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
+    }
+
+    let rawReports = [];
+    try {
+      const { data, error: rErr } = await client
+        .from('medical_reports')
+        .select('*')
+        .eq('user_id', id)
+        .order('created_at', { ascending: false });
+
+      if (data && data.length > 0) {
+        rawReports = data;
+      } else if (id && id.includes('@')) {
+        const { data: p } = await client
+          .from('profiles')
+          .select('id')
+          .eq('email', id.toLowerCase().trim())
+          .maybeSingle();
+        if (p?.id) {
+          const { data: altData } = await client
+            .from('medical_reports')
+            .select('*')
+            .eq('user_id', p.id)
+            .order('created_at', { ascending: false });
+          if (altData && altData.length > 0) {
+            rawReports = altData;
+          }
+        }
+      }
+    } catch (queryErr) {
+      console.warn('getUserMedicalReports query note:', queryErr.message);
+    }
+
+    const reports = (rawReports || []).map(r => {
+      const testResults = buildStructuredTestResults(r.analysis || {}, r.raw_ocr_text || '');
+      const summaryCards = calculateSummaryCards(testResults);
+      const isFailed = r.processing_status === 'ocr_failed' || r.analysis?.analysisFailed;
+      const isCompleted = Boolean(r.analysis && (r.analysis.summary || r.analysis.healthSummary || r.analysis.intelligence));
+      const statusIndicator = isFailed ? 'Analysis Failed' : (isCompleted ? 'Analysis Completed' : 'Not Analyzed');
+
+      return {
+        id: r.id,
+        userId: r.user_id,
+        reportName: r.report_name || r.original_filename || 'Medical Report',
+        originalFilename: r.original_filename || 'report.pdf',
+        mimeType: r.mime_type || 'application/pdf',
+        fileSizeBytes: r.file_size_bytes || 0,
+        uploadDate: r.created_at,
+        documentType: r.document_type || 'digital_pdf',
+        processingStatus: r.processing_status || 'completed',
+        statusIndicator,
+        ocrConfidence: r.ocr_confidence || 95,
+        summaryCards,
+        hasAnalysis: isCompleted,
+        analysisSummary: r.analysis?.summary || 'Report processed and stored securely.',
+        healthSummary: r.analysis?.healthSummary || null,
+        disclaimer: MEDICAL_DISCLAIMER
+      };
+    });
+
+    await logAdminAudit(req.user, 'ADMIN_VIEW_USER_REPORTS', { targetUserId: id, count: reports.length });
+
+    res.status(200).json({
+      success: true,
+      userId: id,
+      count: reports.length,
+      reports
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * GET /api/admin/users/:id/medical-reports/:reportId
+ * Get detailed analysis and extracted test table for a specific report
+ */
+exports.getUserMedicalReportById = async (req, res, next) => {
+  try {
+    const { id, reportId } = req.params;
+    const client = getClient();
+    if (!client) {
+      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
+    }
+
+    const { data: report, error } = await client
+      .from('medical_reports')
+      .select('*')
+      .eq('id', reportId)
+      .eq('user_id', id)
+      .maybeSingle();
+
+    if (error || !report) {
+      return res.status(404).json({ success: false, message: 'Medical report not found.' });
+    }
+
+    // Fetch user profile for dietary context
+    const { data: profileDoc } = await client
+      .from('profiles')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    const prefs = profileDoc?.preferences || {};
+    const userProfile = {
+      dietType: profileDoc?.diet_type || prefs.dietType || 'Vegetarian',
+      cuisines: prefs.cuisines || [],
+      allergies: prefs.allergies || [],
+      healthGoals: prefs.healthGoals || []
+    };
+
+    const testResults = buildStructuredTestResults(report.analysis || {}, report.raw_ocr_text || '');
+    const summaryCards = calculateSummaryCards(testResults);
+    const isFailed = report.processing_status === 'ocr_failed' || report.analysis?.analysisFailed;
+    const isCompleted = Boolean(report.analysis && (report.analysis.summary || report.analysis.healthSummary || report.analysis.intelligence));
+    const statusIndicator = isFailed ? 'Analysis Failed' : (isCompleted ? 'Analysis Completed' : 'Not Analyzed');
+
+    const abnormalValues = testResults.filter(t => t.status === 'High' || t.status === 'Low');
+    const normalValues = testResults.filter(t => t.status === 'Normal');
+    const conditions = report.analysis?.findings || (report.analysis?.wellnessConcerns && report.analysis.wellnessConcerns.map(c => c.concern)) || [];
+
+    const healthSummary = report.analysis?.healthSummary || {
+      overallHealthSummary: report.analysis?.summary || report.analysis?.intelligence?.summary || 'Laboratory report processed and ready for review.',
+      reportedMedicalConditions: conditions.length > 0 ? conditions : ['No explicit chronic diagnoses recorded on lab panel.'],
+      abnormalLaboratoryValues: abnormalValues,
+      normalLaboratoryValues: normalValues,
+      importantHealthIndicators: testResults.slice(0, 8),
+      potentialNutritionalConsiderations: report.analysis?.intelligence?.nutritionConsiderations || (report.analysis?.foodProfile?.foodsToPrefer && report.analysis.foodProfile.foodsToPrefer.join(', ')) || 'Maintain wholesome dietary variety.',
+      dietaryRecommendationsRelevantToFoodieBite: report.analysis?.intelligence?.foodSuggestions || [],
+      itemsRequiringMedicalFollowUp: abnormalValues.length > 0
+        ? abnormalValues.map(a => `${a.test} measured at ${a.result} ${a.unit} (${a.status} relative to ${a.referenceRange}) warrants clinical correlation.`)
+        : ['All measured biomarkers within reference ranges.'],
+      healthcareGuidance: report.analysis?.intelligence?.healthcareGuidance || 'Consult your healthcare provider for clinical evaluation of laboratory results.',
+      reportDate: report.created_at,
+      summaryGenerationDate: report.analysis?.lastAnalyzedAt || report.created_at,
+      analysisStatus: statusIndicator,
+      disclaimer: MEDICAL_DISCLAIMER
+    };
+
+    await logAdminAudit(req.user, 'ADMIN_VIEW_REPORT_DETAIL', { targetUserId: id, reportId });
+
+    res.status(200).json({
+      success: true,
+      report: {
+        id: report.id,
+        userId: report.user_id,
+        reportName: report.report_name || report.original_filename || 'Medical Report',
+        originalFilename: report.original_filename,
+        mimeType: report.mime_type,
+        fileSizeBytes: report.file_size_bytes,
+        uploadDate: report.created_at,
+        documentType: report.document_type,
+        processingStatus: report.processing_status,
+        statusIndicator,
+        ocrConfidence: report.ocr_confidence,
+        rawOcrText: report.raw_ocr_text,
+        summaryCards,
+        testResults,
+        analysis: report.analysis,
+        healthSummary,
+        userProfile,
+        disclaimer: MEDICAL_DISCLAIMER
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /api/admin/users/:id/medical-reports/:reportId/analyze
+ * Run Local Ollama Medical Report Intelligence
+ */
+exports.analyzeUserMedicalReport = async (req, res, next) => {
+  try {
+    const { id, reportId } = req.params;
+    const client = getClient();
+    if (!client) {
+      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
+    }
+
+    const { data: report, error: repErr } = await client
+      .from('medical_reports')
+      .select('*')
+      .eq('id', reportId)
+      .eq('user_id', id)
+      .maybeSingle();
+
+    if (repErr || !report) {
+      return res.status(404).json({ success: false, message: 'Medical report not found.' });
+    }
+
+    // Fetch user profile for personalized dietary filtering
+    const { data: profileDoc } = await client
+      .from('profiles')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    const prefs = profileDoc?.preferences || {};
+    const userProfile = {
+      id: id,
+      name: profileDoc?.name || 'User',
+      dietType: profileDoc?.diet_type || prefs.dietType || 'Vegetarian',
+      cuisines: prefs.cuisines || [],
+      allergies: prefs.allergies || [],
+      healthGoals: prefs.healthGoals || [],
+      spiceLevel: prefs.spiceLevel || 'Medium'
+    };
+
+    // Run AI analysis
+    const intelligence = await generateMedicalReportIntelligence(report, userProfile);
+
+    // Persist updated analysis in Supabase
+    const updatedAnalysis = {
+      ...(report.analysis || {}),
+      intelligence: intelligence.aiAnalysis,
+      healthSummary: intelligence.healthSummary,
+      summaryCards: intelligence.summaryCards,
+      testResults: intelligence.testResults,
+      lastAnalyzedAt: new Date().toISOString(),
+      analyzedBy: req.user?.email || 'admin'
+    };
+
+    await client
+      .from('medical_reports')
+      .update({
+        analysis: updatedAnalysis,
+        processing_status: 'completed',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', reportId)
+      .eq('user_id', id);
+
+    await logAdminAudit(req.user, 'ADMIN_ANALYZE_REPORT', {
+      targetUserId: id,
+      reportId,
+      provider: intelligence.provider,
+      testsCount: intelligence.summaryCards?.totalTests || 0
+    });
+
+    res.status(200).json({
+      success: true,
+      provider: intelligence.provider,
+      intelligence,
+      healthSummary: intelligence.healthSummary
+    });
+  } catch (err) {
+    console.error('analyzeUserMedicalReport failed:', err.message);
+    next(err);
+  }
+};
+
+/**
+ * GET /api/admin/users/:id/medical-reports/:reportId/view
+ * Secure View Document URL: Generates short-lived signed URL (300s) from Supabase Storage
+ */
+exports.viewUserMedicalReport = async (req, res, next) => {
+  try {
+    const { id, reportId } = req.params;
+    const client = getClient();
+    if (!client) {
+      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
+    }
+
+    const { data: report, error } = await client
+      .from('medical_reports')
+      .select('*')
+      .eq('id', reportId)
+      .eq('user_id', id)
+      .maybeSingle();
+
+    if (error || !report) {
+      return res.status(404).json({ success: false, message: 'Report not found.' });
+    }
+
+    let viewUrl = null;
+    let signedUrlExpiresIn = 300; // 5 minutes
+
+    if (report.storage_path) {
+      const cleanPath = report.storage_path.startsWith('medical-reports/')
+        ? report.storage_path.replace(/^medical-reports\//, '')
+        : report.storage_path;
+
+      try {
+        const { data: signedData, error: sErr } = await client.storage
+          .from('medical-reports')
+          .createSignedUrl(cleanPath, signedUrlExpiresIn);
+
+        if (!sErr && signedData?.signedUrl) {
+          viewUrl = signedData.signedUrl;
+        }
+      } catch (storageErr) {
+        console.warn('Storage signed URL generation warning:', storageErr.message);
+      }
+    }
+
+    await logAdminAudit(req.user, 'ADMIN_VIEW_REPORT_DOCUMENT', { targetUserId: id, reportId });
+
+    res.status(200).json({
+      success: true,
+      reportId: report.id,
+      reportName: report.report_name || report.original_filename,
+      mimeType: report.mime_type || 'application/pdf',
+      viewUrl,
+      expiresInSeconds: signedUrlExpiresIn,
+      rawOcrText: report.raw_ocr_text || ''
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * DELETE /api/admin/users/:id/medical-reports/:reportId
+ * Permanently deletes user medical report from database and storage
+ */
+exports.deleteUserMedicalReport = async (req, res, next) => {
+  try {
+    const { id, reportId } = req.params;
+    const client = getClient();
+    if (!client) {
+      return res.status(500).json({ success: false, message: 'Database client unavailable.' });
+    }
+
+    const { data: report } = await client
+      .from('medical_reports')
+      .select('storage_path, report_name')
+      .eq('id', reportId)
+      .eq('user_id', id)
+      .maybeSingle();
+
+    // 1. Delete database record
+    const { error: delErr } = await client
+      .from('medical_reports')
+      .delete()
+      .eq('id', reportId)
+      .eq('user_id', id);
+
+    if (delErr) {
+      return res.status(500).json({ success: false, message: delErr.message });
+    }
+
+    // 2. Delete file from Supabase Storage
+    if (report?.storage_path) {
+      const cleanPath = report.storage_path.startsWith('medical-reports/')
+        ? report.storage_path.replace(/^medical-reports\//, '')
+        : report.storage_path;
+
+      await client.storage
+        .from('medical-reports')
+        .remove([cleanPath])
+        .catch(() => {});
+    }
+
+    await logAdminAudit(req.user, 'ADMIN_DELETE_REPORT', { targetUserId: id, reportId, reportName: report?.report_name });
+
+    res.status(200).json({
+      success: true,
+      message: 'Medical report permanently deleted.'
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  ADMIN FOOD DATABASE MANAGEMENT CONTROLLERS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/admin/foods
+ * Queries, filters, sorts, and paginates the complete unified FoodieBite food database
+ */
+exports.getAllFoodsDatabase = async (req, res, next) => {
+  try {
+    const result = queryFoodDatabase(req.query);
+    res.status(200).json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('getAllFoodsDatabase error:', err.message);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /api/admin/foods/stats
+ * Computes live aggregated statistics over all foods
+ */
+exports.getFoodDatabaseStats = async (req, res, next) => {
+  try {
+    const stats = getFoodDatabaseStats();
+    res.status(200).json({
+      success: true,
+      stats
+    });
+  } catch (err) {
+    console.error('getFoodDatabaseStats error:', err.message);
+    if (next) next(err);
+    else res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /api/admin/foods/:id
+ * Retrieves complete detailed metadata for a single food item
+ */
+exports.getFoodDatabaseItemById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const food = getFoodItemById(id);
+    if (!food) {
+      return res.status(404).json({ success: false, message: `Food item "${id}" not found in database.` });
+    }
+    res.status(200).json({
+      success: true,
+      food
     });
   } catch (err) {
     if (next) next(err);

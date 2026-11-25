@@ -79,7 +79,18 @@ app.use(cors({
   },
   credentials: true,
   methods:     ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-correlation-id'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'x-correlation-id',
+    'x-admin-key',
+    'admin-key',
+    'apikey',
+    'x-client-info'
+  ],
 }));
 
 // ── Rate limiting ─────────────────────────────────────

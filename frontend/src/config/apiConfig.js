@@ -42,28 +42,26 @@ export function resolveBackendBaseUrl() {
   const isWeb = typeof window !== 'undefined' && typeof window.document !== 'undefined';
   const isAndroid = Platform?.OS === 'android';
 
-  // 1. If explicit environment variable is set
-  if (rawEnv !== '') {
-    const stripped = rawEnv.replace(/\/api\/?$/, '').replace(/\/+$/, '');
-    
-    // Safety guard: if running on production Web or production Android, never allow localhost leaks
-    if (isWeb && window.location && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && stripped.includes('localhost')) {
-      return PRODUCTION_BACKEND_URL;
-    }
-    if (isAndroid && typeof __DEV__ !== 'undefined' && !__DEV__ && stripped.includes('localhost')) {
-      return PRODUCTION_BACKEND_URL;
-    }
-    return stripped;
-  }
-
-  // 2. Web Runtime Environment Resolution
+  // 1. Web Runtime Environment Resolution
   if (isWeb && window.location) {
     const hostname = window.location.hostname;
+    // When accessing from local browser (localhost / 127.0.0.1), always use local backend
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      if (rawEnv && (rawEnv.includes('localhost') || rawEnv.includes('127.0.0.1'))) {
+        return rawEnv.replace(/\/api\/?$/, '').replace(/\/+$/, '');
+      }
       return LOCAL_BACKEND_URL;
     }
-    // Remote domain (e.g. GitHub Pages https://sham-2005.github.io or custom domain)
+    // Remote domain (e.g. Vercel, GitHub Pages, or custom domain)
+    if (rawEnv && !rawEnv.includes('localhost')) {
+      return rawEnv.replace(/\/api\/?$/, '').replace(/\/+$/, '');
+    }
     return PRODUCTION_BACKEND_URL;
+  }
+
+  // 2. Explicit environment variable override for non-web environments
+  if (rawEnv !== '') {
+    return rawEnv.replace(/\/api\/?$/, '').replace(/\/+$/, '');
   }
 
   // 3. Android / Mobile Runtime Environment Resolution

@@ -11,6 +11,7 @@ import {
   Linking,
   Modal,
   Platform,
+  Image,
   useWindowDimensions
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -52,7 +53,20 @@ import {
   AlertTriangle,
   Bell,
   Save,
-  Sliders
+  Sliders,
+  Sparkles,
+  Eye,
+  Heart,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  Database,
+  Filter,
+  Flame,
+  Leaf,
+  Layers,
+  Info,
+  X
 } from 'lucide-react-native';
 import { C, BackHeader, BtnOrange } from '../components/UI';
 import { useApp } from '../context/AppContext';
@@ -82,7 +96,15 @@ import {
   apiAdminGetRestaurantRequests,
   apiAdminApproveRestaurantRequest,
   apiAdminRejectRestaurantRequest,
-  apiAdminGetAuditLogs
+  apiAdminGetAuditLogs,
+  apiAdminGetUserMedicalReports,
+  apiAdminGetUserMedicalReportById,
+  apiAdminAnalyzeUserMedicalReport,
+  apiAdminGetMedicalReportViewUrl,
+  apiAdminDeleteUserMedicalReport,
+  apiAdminGetFoodDatabase,
+  apiAdminGetFoodDatabaseStats,
+  apiAdminGetFoodDatabaseItemById
 } from '../services/api';
 import AppLayout from '../components/AppLayout';
 
@@ -204,6 +226,30 @@ const formatDateOnly = (dateVal) => {
   }
 };
 
+const FoodCardImage = ({ uri, name, category }) => {
+  const [imageError, setImageError] = useState(false);
+
+  if (!uri || imageError) {
+    return (
+      <View style={styles.foodGridFallbackImage}>
+        <Database size={28} color="#475569" />
+        <Text style={styles.foodGridFallbackText} numberOfLines={1}>
+          {category || 'FoodieBite'}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <Image
+      source={{ uri }}
+      style={styles.foodGridThumb}
+      resizeMode="cover"
+      onError={() => setImageError(true)}
+    />
+  );
+};
+
 export default function AdminDashboardScreen() {
   const navigation = useNavigation();
   const { user, logout } = useApp();
@@ -222,32 +268,38 @@ export default function AdminDashboardScreen() {
       return existing;
     }
     if (user && user.email?.toLowerCase().trim() === 'sham111205s@gmail.com') {
-      return {
+      const adminSess = {
         success: true,
+        adminKey: 'foodiebite_ai_live_key_2026',
         admin: {
           id: user.uid || user.id,
           email: 'sham111205s@gmail.com',
           name: user.displayName || 'Authorized Admin',
           role: 'admin'
         },
-        token: user?.stsTokenManager?.accessToken || getItemSync('nb_token') || 'admin_token'
+        token: user?.token || user?.stsTokenManager?.accessToken || getItemSync('nb_token') || 'foodiebite_ai_live_key_2026'
       };
+      try { setItemSync('foodiebite_admin_session', JSON.stringify(adminSess)); } catch (_) {}
+      return adminSess;
     }
     return null;
   });
 
   useEffect(() => {
     if (user && user.email?.toLowerCase().trim() === 'sham111205s@gmail.com') {
-      setAdminSession({
+      const adminSess = {
         success: true,
+        adminKey: 'foodiebite_ai_live_key_2026',
         admin: {
           id: user.uid || user.id,
           email: 'sham111205s@gmail.com',
           name: user.displayName || 'Authorized Admin',
           role: 'admin'
         },
-        token: user?.stsTokenManager?.accessToken || getItemSync('nb_token') || 'admin_token'
-      });
+        token: user?.token || user?.stsTokenManager?.accessToken || getItemSync('nb_token') || 'foodiebite_ai_live_key_2026'
+      };
+      try { setItemSync('foodiebite_admin_session', JSON.stringify(adminSess)); } catch (_) {}
+      setAdminSession(adminSess);
     }
   }, [user]);
 
@@ -521,9 +573,59 @@ export default function AdminDashboardScreen() {
   const [loadingUserDetails, setLoadingUserDetails] = useState(false);
   const [userDetailsError, setUserDetailsError] = useState(null);
 
+  // Medical Reports Intelligence state
+  const [userMedicalReports, setUserMedicalReports] = useState([]);
+  const [loadingMedicalReports, setLoadingMedicalReports] = useState(false);
+  const [selectedReportId, setSelectedReportId] = useState(null);
+  const [activeReportData, setActiveReportData] = useState(null);
+  const [loadingReportDetail, setLoadingReportDetail] = useState(false);
+  const [analyzingReportId, setAnalyzingReportId] = useState(null);
+  const [reportActionMsg, setReportActionMsg] = useState(null);
+
+  // Food Database Management State
+  const [foodItems, setFoodItems] = useState([]);
+  const [loadingFoods, setLoadingFoods] = useState(false);
+  const [loadingMoreFoods, setLoadingMoreFoods] = useState(false);
+  const [foodSearch, setFoodSearch] = useState('');
+  const [foodCategoryFilter, setFoodCategoryFilter] = useState('ALL');
+  const [foodCuisineFilter, setFoodCuisineFilter] = useState('ALL');
+  const [foodDietFilter, setFoodDietFilter] = useState('ALL');
+  const [foodSpiceFilter, setFoodSpiceFilter] = useState('ALL');
+  const [foodSeasonalityFilter, setFoodSeasonalityFilter] = useState('ALL');
+  const [foodSortBy, setFoodSortBy] = useState('name');
+  const [foodSortOrder, setFoodSortOrder] = useState('asc');
+  const [foodPage, setFoodPage] = useState(1);
+  const [foodLimit] = useState(12);
+  const [foodTotalPages, setFoodTotalPages] = useState(1);
+  const [foodTotalCount, setFoodTotalCount] = useState(0);
+  const [selectedFoodItem, setSelectedFoodItem] = useState(null);
+  const [loadingFoodDetail, setLoadingFoodDetail] = useState(false);
+  const [foodError, setFoodError] = useState(null);
+  const [medicalReportsError, setMedicalReportsError] = useState(null);
+
   // Resolution inline state
   const [resolvingId, setResolvingId] = useState(null);
   const [replyText, setReplyText] = useState('');
+
+  const loadUserMedicalReports = async (uid) => {
+    if (!uid) return;
+    setLoadingMedicalReports(true);
+    setMedicalReportsError(null);
+    try {
+      const res = await apiAdminGetUserMedicalReports(uid);
+      if (res && res.success && Array.isArray(res.reports)) {
+        setUserMedicalReports(res.reports);
+      } else {
+        setUserMedicalReports([]);
+      }
+    } catch (err) {
+      console.warn('loadUserMedicalReports error:', err.message);
+      setMedicalReportsError(err.message || 'Failed to retrieve medical reports.');
+      setUserMedicalReports([]);
+    } finally {
+      setLoadingMedicalReports(false);
+    }
+  };
 
   const handleSelectUser = async (user, sno) => {
     const uid = user.id || user.uid;
@@ -532,6 +634,10 @@ export default function AdminDashboardScreen() {
     setSelectedUserDetails(user);
     setLoadingUserDetails(true);
     setUserDetailsError(null);
+    setMedicalReportsError(null);
+    setUserMedicalReports([]);
+    setSelectedReportId(null);
+    setActiveReportData(null);
     try {
       const res = await apiAdminGetUserDetails(uid);
       if (res && res.success && res.user) {
@@ -543,6 +649,8 @@ export default function AdminDashboardScreen() {
     } finally {
       setLoadingUserDetails(false);
     }
+
+    loadUserMedicalReports(uid);
   };
 
   const handleBackToUsersList = () => {
@@ -550,6 +658,109 @@ export default function AdminDashboardScreen() {
     setSelectedUserSno(null);
     setSelectedUserDetails(null);
     setUserDetailsError(null);
+    setMedicalReportsError(null);
+    setUserMedicalReports([]);
+    setSelectedReportId(null);
+    setActiveReportData(null);
+  };
+
+  const handleSelectReport = async (reportId) => {
+    if (selectedReportId === reportId && activeReportData) {
+      setSelectedReportId(null);
+      setActiveReportData(null);
+      return;
+    }
+    setSelectedReportId(reportId);
+    setLoadingReportDetail(true);
+    try {
+      const res = await apiAdminGetUserMedicalReportById(selectedUserId, reportId);
+      if (res && res.success && res.report) {
+        setActiveReportData(res.report);
+      }
+    } catch (err) {
+      Alert.alert('Report Details Error', err.message);
+    } finally {
+      setLoadingReportDetail(false);
+    }
+  };
+
+  const handleAnalyzeReport = async (reportId) => {
+    if (!selectedUserId || !reportId) return;
+    setAnalyzingReportId(reportId);
+    setReportActionMsg('Running Local Ollama (qwen2.5:0.5b) clinical analysis...');
+    try {
+      const res = await apiAdminAnalyzeUserMedicalReport(selectedUserId, reportId);
+      if (res && res.success) {
+        const detailed = await apiAdminGetUserMedicalReportById(selectedUserId, reportId);
+        if (detailed?.report) {
+          setActiveReportData(detailed.report);
+          setSelectedReportId(reportId);
+        }
+        await loadUserMedicalReports(selectedUserId);
+        Alert.alert(
+          'Analysis Completed',
+          `Medical report successfully analyzed using ${res.provider === 'ollama' ? 'Local Ollama AI (qwen2.5:0.5b)' : 'Clinical Deterministic Engine'}.`
+        );
+      }
+    } catch (err) {
+      Alert.alert('Analysis Failed', err.message);
+    } finally {
+      setAnalyzingReportId(null);
+      setReportActionMsg(null);
+    }
+  };
+
+  const handleViewReportDocument = async (reportId) => {
+    try {
+      const res = await apiAdminGetMedicalReportViewUrl(selectedUserId, reportId);
+      if (res?.viewUrl) {
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.open === 'function') {
+          window.open(res.viewUrl, '_blank');
+        } else {
+          Linking.openURL(res.viewUrl);
+        }
+      } else if (res?.rawOcrText) {
+        Alert.alert(
+          'Report Document (Extracted OCR Text)',
+          res.rawOcrText.slice(0, 600) + (res.rawOcrText.length > 600 ? '\n\n...[Preview Truncated]' : '')
+        );
+      } else {
+        Alert.alert('Document Notice', 'No signed URL or extracted document available.');
+      }
+    } catch (err) {
+      Alert.alert('Document View Error', err.message);
+    }
+  };
+
+  const handleDeleteReport = (report) => {
+    const doDelete = async () => {
+      try {
+        await apiAdminDeleteUserMedicalReport(selectedUserId, report.id);
+        if (selectedReportId === report.id) {
+          setSelectedReportId(null);
+          setActiveReportData(null);
+        }
+        await loadUserMedicalReports(selectedUserId);
+        Alert.alert('Report Removed', 'Medical report permanently deleted from storage and database.');
+      } catch (err) {
+        Alert.alert('Delete Failed', err.message);
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      if (window.confirm(`Are you sure you want to permanently delete "${report.reportName}"? This action cannot be undone.`)) {
+        doDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete Medical Report',
+        `Are you sure you want to permanently delete "${report.reportName}"?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: doDelete }
+        ]
+      );
+    }
   };
 
   // Browser back/forward popstate listener (Web only)
@@ -629,17 +840,110 @@ export default function AdminDashboardScreen() {
     }
   };
 
-  const loadFoodsData = async () => {
-    setLoadingRequests(true);
+  const loadFoodDatabase = async (page = 1, overrideFilters = {}, isAppend = false) => {
+    if (isAppend) {
+      setLoadingMoreFoods(true);
+    } else {
+      setLoadingFoods(true);
+    }
+    setFoodError(null);
     try {
-      const reqsRes = await apiAdminGetRestaurantRequests();
-      if (reqsRes?.success && reqsRes.requests) {
-        setRestaurantRequests(reqsRes.requests);
+      const q = overrideFilters.q !== undefined ? overrideFilters.q : foodSearch;
+      const cat = overrideFilters.category !== undefined ? overrideFilters.category : foodCategoryFilter;
+      const cui = overrideFilters.cuisine !== undefined ? overrideFilters.cuisine : foodCuisineFilter;
+      const diet = overrideFilters.dietType !== undefined ? overrideFilters.dietType : foodDietFilter;
+      const spice = overrideFilters.spiceLevel !== undefined ? overrideFilters.spiceLevel : foodSpiceFilter;
+      const season = overrideFilters.seasonality !== undefined ? overrideFilters.seasonality : foodSeasonalityFilter;
+      const sBy = overrideFilters.sortBy !== undefined ? overrideFilters.sortBy : foodSortBy;
+      const sOrd = overrideFilters.sortOrder !== undefined ? overrideFilters.sortOrder : foodSortOrder;
+
+      const params = {
+        page,
+        limit: foodLimit,
+        q: q ? q.trim() : undefined,
+        category: cat !== 'ALL' ? cat : undefined,
+        cuisine: cui !== 'ALL' ? cui : undefined,
+        dietType: diet !== 'ALL' ? diet : undefined,
+        spiceLevel: spice !== 'ALL' ? spice : undefined,
+        seasonality: season !== 'ALL' ? season : undefined,
+        sortBy: sBy,
+        sortOrder: sOrd
+      };
+
+      const res = await apiAdminGetFoodDatabase(params);
+      if (res && res.success) {
+        const fetchedFoods = res.foods || [];
+        if (isAppend) {
+          setFoodItems(prev => {
+            const existingIds = new Set(prev.map(f => f.id));
+            const newRecords = fetchedFoods.filter(f => !existingIds.has(f.id));
+            return [...prev, ...newRecords];
+          });
+        } else {
+          setFoodItems(fetchedFoods);
+        }
+        setFoodPage(res.page || page);
+        setFoodTotalPages(res.totalPages || 1);
+        setFoodTotalCount(res.total || 0);
+      } else {
+        throw new Error(res?.message || 'Failed to fetch food database records');
       }
     } catch (err) {
-      console.warn('Failed to load restaurant requests:', err.message);
+      console.warn('loadFoodDatabase error:', err.message);
+      setFoodError(err.message || 'Unable to load food database from server.');
     } finally {
-      setLoadingRequests(false);
+      if (isAppend) {
+        setLoadingMoreFoods(false);
+      } else {
+        setLoadingFoods(false);
+      }
+    }
+  };
+
+  const handleLoadMoreFoods = () => {
+    if (loadingMoreFoods || loadingFoods) return;
+    if (foodPage >= foodTotalPages || foodItems.length >= foodTotalCount) return;
+    loadFoodDatabase(foodPage + 1, {}, true);
+  };
+
+  const handleResetFoodFilters = () => {
+    setFoodSearch('');
+    setFoodCategoryFilter('ALL');
+    setFoodCuisineFilter('ALL');
+    setFoodDietFilter('ALL');
+    setFoodSpiceFilter('ALL');
+    setFoodSeasonalityFilter('ALL');
+    setFoodSortBy('name');
+    setFoodSortOrder('asc');
+    loadFoodDatabase(1, {
+      q: '',
+      category: 'ALL',
+      cuisine: 'ALL',
+      dietType: 'ALL',
+      spiceLevel: 'ALL',
+      seasonality: 'ALL',
+      sortBy: 'name',
+      sortOrder: 'asc'
+    }, false);
+  };
+
+  const loadFoodsData = async () => {
+    setFoodError(null);
+    loadFoodDatabase(1, {}, false);
+  };
+
+  const handleSelectFoodItem = async (food) => {
+    setSelectedFoodItem(food);
+    setLoadingFoodDetail(true);
+    try {
+      const res = await apiAdminGetFoodDatabaseItemById(food.id);
+      if (res && res.success && res.food) {
+        setSelectedFoodItem(res.food);
+      }
+    } catch (err) {
+      console.warn('handleSelectFoodItem error:', err.message);
+    } finally {
+      setLoadingFoodDetail(false);
     }
   };
 
@@ -674,7 +978,7 @@ export default function AdminDashboardScreen() {
       loadOverviewData();
     } else if (activeTab === 'users' && users.length === 0) {
       loadUsersData();
-    } else if (activeTab === 'foods' && restaurantRequests.length === 0) {
+    } else if (activeTab === 'foods' && foodItems.length === 0) {
       loadFoodsData();
     } else if (activeTab === 'feedback' && feedback.length === 0) {
       loadFeedbackData();
@@ -1171,6 +1475,13 @@ export default function AdminDashboardScreen() {
                     {/* Metadata Grid */}
                     <View style={styles.metaGrid}>
                       <View style={styles.metaGridItem}>
+                        <Text style={styles.metaGridLabel}>User ID (UID)</Text>
+                        <Text style={[styles.metaGridValue, { fontSize: 11, fontFamily: Platform.OS === 'web' ? 'monospace' : undefined, color: '#94a3b8' }]} numberOfLines={1}>
+                          {selectedUserDetails.id || selectedUserDetails.uid}
+                        </Text>
+                      </View>
+
+                      <View style={styles.metaGridItem}>
                         <Text style={styles.metaGridLabel}>Auth Provider</Text>
                         <Text style={[styles.metaGridValue, { color: selectedUserDetails.authProvider === 'google.com' ? '#38BDF8' : '#FBBF24', textTransform: 'capitalize' }]}>
                           {selectedUserDetails.authProvider === 'google.com' ? 'Google' : (selectedUserDetails.authProvider || 'Password')}
@@ -1199,6 +1510,13 @@ export default function AdminDashboardScreen() {
                       </View>
 
                       <View style={styles.metaGridItem}>
+                        <Text style={styles.metaGridLabel}>Email Verification</Text>
+                        <Text style={[styles.metaGridValue, { color: selectedUserDetails.emailVerified ? '#10B981' : '#F59E0B' }]}>
+                          {selectedUserDetails.emailVerified ? 'Verified' : 'Unverified'}
+                        </Text>
+                      </View>
+
+                      <View style={styles.metaGridItem}>
                         <Text style={styles.metaGridLabel}>Dietary Type</Text>
                         {(() => {
                           const b = getDietBadgeStyle(selectedUserDetails.dietType || selectedUserDetails.preferences?.dietType);
@@ -1211,9 +1529,9 @@ export default function AdminDashboardScreen() {
                       </View>
 
                       <View style={styles.metaGridItem}>
-                        <Text style={styles.metaGridLabel}>Email Verification</Text>
-                        <Text style={[styles.metaGridValue, { color: selectedUserDetails.emailVerified ? '#10B981' : '#F59E0B' }]}>
-                          {selectedUserDetails.emailVerified ? 'Verified' : 'Unverified'}
+                        <Text style={styles.metaGridLabel}>Medical Reports</Text>
+                        <Text style={[styles.metaGridValue, { color: (userMedicalReports.length > 0 || selectedUserDetails.medicalReportsCount > 0) ? C.orange : C.muted }]}>
+                          {userMedicalReports.length || selectedUserDetails.medicalReportsCount || 0} Uploaded
                         </Text>
                       </View>
                     </View>
@@ -1246,6 +1564,570 @@ export default function AdminDashboardScreen() {
                         </Text>
                       </TouchableOpacity>
                     </View>
+                  </View>
+
+                  {/* SECTION 1: DIETARY & NUTRITION PROFILE */}
+                  <View style={styles.sectionCard}>
+                    <View style={styles.sectionHeaderRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Utensils size={16} color={C.orange} />
+                        <Text style={styles.sectionTitle}>Dietary & Nutrition Profile</Text>
+                      </View>
+                      <View style={styles.countBadge}>
+                        <Text style={styles.countBadgeText}>{selectedUserDetails.favoritesCount || 0} Favorites</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.metaGrid}>
+                      <View style={styles.metaGridItem}>
+                        <Text style={styles.metaGridLabel}>Dietary Preference</Text>
+                        {(() => {
+                          const b = getDietBadgeStyle(selectedUserDetails.dietType || selectedUserDetails.preferences?.dietType);
+                          return (
+                            <View style={[styles.dietBadge, { backgroundColor: b.bg, borderColor: b.border, alignSelf: 'flex-start', marginTop: 2 }]}>
+                              <Text style={[styles.dietBadgeText, { color: b.color }]}>{b.label}</Text>
+                            </View>
+                          );
+                        })()}
+                      </View>
+
+                      <View style={styles.metaGridItem}>
+                        <Text style={styles.metaGridLabel}>Spice Preference</Text>
+                        <Text style={[styles.metaGridValue, { color: '#F97316' }]}>
+                          {selectedUserDetails.spiceLevel || selectedUserDetails.preferences?.spiceLevel || 'Medium'}
+                        </Text>
+                      </View>
+
+                      <View style={styles.metaGridItem}>
+                        <Text style={styles.metaGridLabel}>Favorite Foods Saved</Text>
+                        <Text style={[styles.metaGridValue, { color: '#10B981' }]}>
+                          {selectedUserDetails.favoritesCount || 0} items
+                        </Text>
+                      </View>
+
+                      <View style={styles.metaGridItem}>
+                        <Text style={styles.metaGridLabel}>Health Profile Status</Text>
+                        <Text style={[styles.metaGridValue, { color: '#38BDF8' }]}>
+                          {(userMedicalReports.length > 0 || selectedUserDetails.medicalReportsCount > 0) ? 'Medical Report Synced' : 'Standard Profile'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Preferred Cuisines */}
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={[styles.metaGridLabel, { marginBottom: 6 }]}>Preferred Cuisines</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                        {(() => {
+                          const cuisines = selectedUserDetails.cuisines || selectedUserDetails.preferences?.cuisines || [];
+                          if (cuisines.length === 0) return <Text style={{ fontSize: 12, color: '#64748b' }}>No cuisines selected</Text>;
+                          return cuisines.map((c, i) => (
+                            <View key={i} style={styles.prefChip}>
+                              <Text style={styles.prefChipText}>{c}</Text>
+                            </View>
+                          ));
+                        })()}
+                      </View>
+                    </View>
+
+                    {/* Health Goals */}
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={[styles.metaGridLabel, { marginBottom: 6 }]}>Voluntary Health Goals</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                        {(() => {
+                          const goals = selectedUserDetails.healthGoals || selectedUserDetails.preferences?.healthGoals || [];
+                          if (goals.length === 0) return <Text style={{ fontSize: 12, color: '#64748b' }}>No voluntary health goals declared</Text>;
+                          return goals.map((g, i) => (
+                            <View key={i} style={[styles.prefChip, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.3)' }]}>
+                              <Text style={[styles.prefChipText, { color: '#10B981' }]}>{String(g).replace(/_/g, ' ')}</Text>
+                            </View>
+                          ));
+                        })()}
+                      </View>
+                    </View>
+
+                    {/* Allergies & Sensitivities */}
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={[styles.metaGridLabel, { marginBottom: 6 }]}>Allergies & Dietary Restrictions</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                        {(() => {
+                          const allergies = selectedUserDetails.allergies || selectedUserDetails.preferences?.allergies || [];
+                          if (allergies.length === 0) return <Text style={{ fontSize: 12, color: '#10B981' }}>None declared (Standard safety defaults apply)</Text>;
+                          return allergies.map((a, i) => (
+                            <View key={i} style={[styles.prefChip, { backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)' }]}>
+                              <Text style={[styles.prefChipText, { color: '#EF4444' }]}>{a}</Text>
+                            </View>
+                          ));
+                        })()}
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* SECTION 2: MEDICAL REPORTS & CLINICAL INTELLIGENCE */}
+                  <View style={styles.sectionCard}>
+                    <View style={styles.sectionHeaderRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <FileText size={16} color={C.orange} />
+                        <Text style={styles.sectionTitle}>Medical Reports & Clinical Intelligence</Text>
+                      </View>
+                      <View style={[styles.countBadge, medicalReportsError ? { backgroundColor: 'rgba(239, 68, 68, 0.2)', borderColor: '#EF4444' } : {}]}>
+                        <Text style={[styles.countBadgeText, medicalReportsError ? { color: '#EF4444' } : {}]}>
+                          {loadingMedicalReports ? 'Loading...' : medicalReportsError ? 'Error' : `${userMedicalReports.length} Reports`}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.privacyNoticeBanner}>
+                      <Shield size={13} color="#38BDF8" style={{ marginRight: 6 }} />
+                      <Text style={styles.privacyNoticeText}>
+                        Clinical Intelligence Mode: Private signed URLs expire in 300s. Zero permanent exposure.
+                      </Text>
+                    </View>
+
+                    {reportActionMsg && (
+                      <View style={styles.actionProgressBanner}>
+                        <ActivityIndicator size="small" color={C.orange} style={{ marginRight: 8 }} />
+                        <Text style={styles.actionProgressText}>{reportActionMsg}</Text>
+                      </View>
+                    )}
+
+                    {loadingMedicalReports ? (
+                      <View style={{ padding: 20, alignItems: 'center' }}>
+                        <ActivityIndicator size="small" color={C.orange} />
+                        <Text style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>Loading medical reports...</Text>
+                      </View>
+                    ) : medicalReportsError ? (
+                      <View style={styles.emptyStateContainer}>
+                        <AlertCircle size={28} color="#EF4444" style={{ marginBottom: 8 }} />
+                        <Text style={[styles.emptyStateTitle, { color: '#EF4444' }]}>Unable to Load Medical Reports</Text>
+                        <Text style={styles.emptyStateSub}>{medicalReportsError}</Text>
+                        <TouchableOpacity
+                          style={[styles.primaryBtn, { marginTop: 12, paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }]}
+                          onPress={() => loadUserMedicalReports(selectedUserId)}
+                        >
+                          <RefreshCw size={13} color="#FFF" style={{ marginRight: 6 }} />
+                          <Text style={styles.primaryBtnText}>Retry Loading</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : userMedicalReports.length === 0 ? (
+                      <View style={styles.emptyStateContainer}>
+                        <FileText size={28} color="#334155" style={{ marginBottom: 8 }} />
+                        <Text style={styles.emptyStateTitle}>No Medical Reports Uploaded</Text>
+                        <Text style={styles.emptyStateSub}>This user has not yet uploaded any laboratory bloodwork or clinical health documents through FoodieBite.</Text>
+                      </View>
+                    ) : (
+                      <View style={{ gap: 14, marginTop: 12 }}>
+                        {userMedicalReports.map((report) => {
+                          const isExpanded = selectedReportId === report.id;
+                          const isAnalyzing = analyzingReportId === report.id;
+                          const cards = (isExpanded && activeReportData?.summaryCards) || report.summaryCards || { totalTests: 0, withinRangeCount: 0, outsideRangeCount: 0, reviewCount: 0 };
+                          const testList = (isExpanded && activeReportData?.testResults) || [];
+                          const intelligence = (isExpanded && (activeReportData?.analysis?.intelligence || activeReportData?.aiAnalysis)) || null;
+                          const healthSummary = (isExpanded && (activeReportData?.healthSummary || activeReportData?.analysis?.healthSummary || report.healthSummary)) || null;
+
+                          return (
+                            <View key={report.id} style={styles.medicalReportCard}>
+                              {/* Report Header Row */}
+                              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
+                                <View style={{ flex: 1, minWidth: 220 }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                    <Text style={styles.reportTitleText}>{report.reportName}</Text>
+                                    <View style={[
+                                      styles.reportStatusPill,
+                                      report.statusIndicator === 'Analysis Completed' || report.hasAnalysis
+                                        ? { backgroundColor: 'rgba(16,185,129,0.15)', borderColor: '#10B981' }
+                                        : report.statusIndicator === 'Analysis Failed' || report.processingStatus === 'ocr_failed'
+                                        ? { backgroundColor: 'rgba(239,68,68,0.15)', borderColor: '#EF4444' }
+                                        : { backgroundColor: 'rgba(245,158,11,0.15)', borderColor: '#F59E0B' }
+                                    ]}>
+                                      <Text style={{
+                                        fontSize: 10,
+                                        fontWeight: '700',
+                                        color: report.statusIndicator === 'Analysis Completed' || report.hasAnalysis
+                                          ? '#10B981'
+                                          : report.statusIndicator === 'Analysis Failed' || report.processingStatus === 'ocr_failed'
+                                          ? '#EF4444'
+                                          : '#F59E0B'
+                                      }}>
+                                        {report.statusIndicator || (report.hasAnalysis ? 'Analysis Completed' : 'Not Analyzed')}
+                                      </Text>
+                                    </View>
+                                  </View>
+
+                                  <Text style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
+                                    File: {report.originalFilename} • Uploaded: {formatDateTime(report.uploadDate)} {report.healthSummary?.summaryGenerationDate ? `• Summary: ${formatDateTime(report.healthSummary.summaryGenerationDate)}` : ''}
+                                  </Text>
+                                </View>
+
+                                {/* Action Buttons */}
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                  <TouchableOpacity
+                                    onPress={() => handleAnalyzeReport(report.id)}
+                                    disabled={isAnalyzing}
+                                    style={[styles.reportActionBtn, { backgroundColor: 'rgba(255, 107, 53, 0.15)', borderColor: C.orange }]}
+                                  >
+                                    {isAnalyzing ? (
+                                      <ActivityIndicator size="small" color={C.orange} style={{ marginRight: 4 }} />
+                                    ) : (
+                                      <Sparkles size={12} color={C.orange} style={{ marginRight: 4 }} />
+                                    )}
+                                    <Text style={[styles.reportActionBtnText, { color: C.orange }]}>
+                                      {isAnalyzing ? 'Analyzing...' : 'Analyze with Ollama'}
+                                    </Text>
+                                  </TouchableOpacity>
+
+                                  <TouchableOpacity
+                                    onPress={() => handleViewReportDocument(report.id)}
+                                    style={[styles.reportActionBtn, { backgroundColor: 'rgba(56, 189, 248, 0.12)', borderColor: '#38BDF8' }]}
+                                  >
+                                    <Eye size={12} color="#38BDF8" style={{ marginRight: 4 }} />
+                                    <Text style={[styles.reportActionBtnText, { color: '#38BDF8' }]}>View Document</Text>
+                                  </TouchableOpacity>
+
+                                  <TouchableOpacity
+                                    onPress={() => handleSelectReport(report.id)}
+                                    style={[styles.reportActionBtn, { backgroundColor: 'rgba(255, 255, 255, 0.06)', borderColor: 'rgba(255, 255, 255, 0.15)' }]}
+                                  >
+                                    {isExpanded ? <ChevronUp size={12} color="#fff" /> : <ChevronDown size={12} color="#fff" />}
+                                    <Text style={[styles.reportActionBtnText, { color: '#fff' }]}>
+                                      {isExpanded ? 'Hide Details' : 'Lab Table & AI'}
+                                    </Text>
+                                  </TouchableOpacity>
+
+                                  <TouchableOpacity
+                                    onPress={() => handleDeleteReport(report)}
+                                    style={[styles.reportActionBtn, { backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: '#EF4444', paddingHorizontal: 8 }]}
+                                  >
+                                    <Trash2 size={12} color="#EF4444" />
+                                  </TouchableOpacity>
+                                </View>
+                              </View>
+
+                              {/* Quick Metrics Bar */}
+                              <View style={styles.reportMetricsRow}>
+                                <View style={styles.reportMetricBadge}>
+                                  <Text style={styles.reportMetricNum}>{cards.totalTests}</Text>
+                                  <Text style={styles.reportMetricLabel}>Total Tests</Text>
+                                </View>
+                                <View style={[styles.reportMetricBadge, { borderColor: 'rgba(16, 185, 129, 0.3)' }]}>
+                                  <Text style={[styles.reportMetricNum, { color: '#10B981' }]}>{cards.withinRangeCount}</Text>
+                                  <Text style={styles.reportMetricLabel}>Within Range</Text>
+                                </View>
+                                <View style={[styles.reportMetricBadge, { borderColor: 'rgba(239, 68, 68, 0.3)' }]}>
+                                  <Text style={[styles.reportMetricNum, { color: '#EF4444' }]}>{cards.outsideRangeCount}</Text>
+                                  <Text style={styles.reportMetricLabel}>Outside Range</Text>
+                                </View>
+                                <View style={[styles.reportMetricBadge, { borderColor: 'rgba(245, 158, 11, 0.3)' }]}>
+                                  <Text style={[styles.reportMetricNum, { color: '#F59E0B' }]}>{cards.reviewCount}</Text>
+                                  <Text style={styles.reportMetricLabel}>Review Needed</Text>
+                                </View>
+                              </View>
+
+                              {/* EXPANDED SECTION: LAB TABLE & AI ANALYSIS */}
+                              {isExpanded && (
+                                <View style={styles.reportExpandedSection}>
+                                  {loadingReportDetail ? (
+                                    <View style={{ padding: 24, alignItems: 'center' }}>
+                                      <ActivityIndicator size="small" color={C.orange} />
+                                      <Text style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>Loading structured biomarkers & AI insights...</Text>
+                                    </View>
+                                  ) : (
+                                    <View style={{ gap: 14 }}>
+                                      {/* 1. STRUCTURED LAB RESULTS TABLE */}
+                                      <View style={styles.labTableContainer}>
+                                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                          <Text style={styles.subSectionTitle}>Extracted Laboratory Biomarkers</Text>
+                                          <Text style={{ fontSize: 11, color: C.muted }}>{testList.length} Biomarkers Analyzed</Text>
+                                        </View>
+
+                                        {testList.length === 0 ? (
+                                          <Text style={{ fontSize: 12, color: C.muted, padding: 8 }}>No structured test rows identified from OCR.</Text>
+                                        ) : (
+                                          <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+                                            <View style={{ minWidth: 620 }}>
+                                              <View style={styles.labTableHeader}>
+                                                <Text style={[styles.labTableHeaderCell, { flex: 2.2 }]}>Test Name</Text>
+                                                <Text style={[styles.labTableHeaderCell, { flex: 1.2, textAlign: 'right' }]}>Measured Result</Text>
+                                                <Text style={[styles.labTableHeaderCell, { flex: 1.2, textAlign: 'center' }]}>Unit</Text>
+                                                <Text style={[styles.labTableHeaderCell, { flex: 1.8 }]}>Reference Range</Text>
+                                                <Text style={[styles.labTableHeaderCell, { width: 88, textAlign: 'center' }]}>Status</Text>
+                                              </View>
+
+                                              {testList.map((t, idx) => {
+                                                const s = (t.status || 'Normal').toLowerCase();
+                                                let statusBg = 'rgba(16,185,129,0.15)';
+                                                let statusColor = '#10B981';
+                                                let statusBorder = '#10B981';
+                                                if (s === 'high') {
+                                                  statusBg = 'rgba(239,68,68,0.15)';
+                                                  statusColor = '#EF4444';
+                                                  statusBorder = '#EF4444';
+                                                } else if (s === 'low') {
+                                                  statusBg = 'rgba(56,189,248,0.15)';
+                                                  statusColor = '#38BDF8';
+                                                  statusBorder = '#38BDF8';
+                                                } else if (s === 'uncertain' || s === 'review') {
+                                                  statusBg = 'rgba(245,158,11,0.15)';
+                                                  statusColor = '#F59E0B';
+                                                  statusBorder = '#F59E0B';
+                                                }
+
+                                                return (
+                                                  <View key={t.key || idx} style={[styles.labTableRow, idx % 2 === 1 && { backgroundColor: 'rgba(255,255,255,0.015)' }]}>
+                                                    <Text style={[styles.labTableCell, { flex: 2.2, color: '#fff', fontWeight: '600' }]}>{t.test}</Text>
+                                                    <Text style={[styles.labTableCell, { flex: 1.2, textAlign: 'right', fontWeight: '700', color: statusColor }]}>{t.result}</Text>
+                                                    <Text style={[styles.labTableCell, { flex: 1.2, textAlign: 'center', color: '#94a3b8' }]}>{t.unit || '—'}</Text>
+                                                    <Text style={[styles.labTableCell, { flex: 1.8, color: '#94a3b8' }]}>{t.referenceRange || 'Standard Range'}</Text>
+                                                    <View style={{ width: 88, alignItems: 'center' }}>
+                                                      <View style={[styles.labStatusBadge, { backgroundColor: statusBg, borderColor: statusBorder }]}>
+                                                        <Text style={[styles.labStatusText, { color: statusColor }]}>{t.status}</Text>
+                                                      </View>
+                                                    </View>
+                                                  </View>
+                                                );
+                                              })}
+                                            </View>
+                                          </ScrollView>
+                                        )}
+                                      </View>
+
+                                      {/* 2. OLLAMA AI CLINICAL INTELLIGENCE CARD */}
+                                      {intelligence ? (
+                                        <View style={styles.aiInsightsCard}>
+                                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                              <Sparkles size={16} color={C.orange} />
+                                              <Text style={styles.aiCardTitle}>Local Ollama Medical Intelligence</Text>
+                                            </View>
+                                            <View style={styles.aiModelBadge}>
+                                              <Text style={styles.aiModelBadgeText}>
+                                                {intelligence.model || (intelligence.source === 'ollama' ? 'qwen2.5:0.5b' : 'Deterministic Engine')}
+                                              </Text>
+                                            </View>
+                                          </View>
+
+                                          {/* Summary */}
+                                          {intelligence.summary ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Clinical Overview</Text>
+                                              <Text style={styles.aiInsightText}>{intelligence.summary}</Text>
+                                            </View>
+                                          ) : null}
+
+                                          {/* Observations */}
+                                          {Array.isArray(intelligence.observations) && intelligence.observations.length > 0 ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Key Observations</Text>
+                                              {intelligence.observations.map((obs, i) => (
+                                                <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 3 }}>
+                                                  <Text style={{ color: C.orange, fontSize: 13, lineHeight: 18 }}>•</Text>
+                                                  <Text style={[styles.aiInsightText, { flex: 1 }]}>{obs}</Text>
+                                                </View>
+                                              ))}
+                                            </View>
+                                          ) : null}
+
+                                          {/* General Interpretation */}
+                                          {intelligence.generalInterpretation ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Physiological Interpretation (Educational)</Text>
+                                              <Text style={styles.aiInsightText}>{intelligence.generalInterpretation}</Text>
+                                            </View>
+                                          ) : null}
+
+                                          {/* Nutritional Considerations */}
+                                          {intelligence.nutritionConsiderations ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Nutritional Considerations</Text>
+                                              <Text style={styles.aiInsightText}>{intelligence.nutritionConsiderations}</Text>
+                                            </View>
+                                          ) : null}
+
+                                          {/* Grounded Food Suggestions */}
+                                          {Array.isArray(intelligence.foodSuggestions) && intelligence.foodSuggestions.length > 0 ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Verified FoodieBite Recommendations</Text>
+                                              <Text style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>
+                                                Grounded in FoodieBite Knowledge Base & filtered for {selectedUserDetails.dietType || 'Vegetarian'} preferences:
+                                              </Text>
+                                              <View style={{ gap: 8 }}>
+                                                {intelligence.foodSuggestions.map((food, fi) => (
+                                                  <View key={fi} style={styles.foodSuggestionCard}>
+                                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                      <Text style={styles.foodSuggestionTitle}>{food.foodName}</Text>
+                                                      {food.benefits ? (
+                                                        <View style={styles.foodBenefitPill}>
+                                                          <Text style={styles.foodBenefitText}>{food.benefits}</Text>
+                                                        </View>
+                                                      ) : null}
+                                                    </View>
+                                                    <Text style={styles.foodSuggestionReason}>{food.reason}</Text>
+                                                  </View>
+                                                ))}
+                                              </View>
+                                            </View>
+                                          ) : null}
+
+                                          {/* Healthcare Guidance */}
+                                          {intelligence.healthcareGuidance ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Healthcare Provider Guidance</Text>
+                                              <Text style={styles.aiInsightText}>{intelligence.healthcareGuidance}</Text>
+                                            </View>
+                                          ) : null}
+
+                                          {/* Prominent Disclaimer Banner */}
+                                          <View style={styles.medicalDisclaimerBox}>
+                                            <AlertTriangle size={15} color="#F59E0B" style={{ marginTop: 2, marginRight: 8 }} />
+                                            <View style={{ flex: 1 }}>
+                                              <Text style={styles.medicalDisclaimerTitle}>NON-DIAGNOSTIC MEDICAL DISCLAIMER</Text>
+                                              <Text style={styles.medicalDisclaimerText}>
+                                                {intelligence.disclaimer || 'This analysis is informational only and is not a medical diagnosis or substitute for professional medical advice. Laboratory results should be interpreted by a qualified healthcare professional in the context of your medical history and symptoms.'}
+                                              </Text>
+                                            </View>
+                                          </View>
+                                        </View>
+                                      ) : null}
+
+                                      {/* 3. STRUCTURED HEALTH SUMMARY (10 CLINICAL FIELDS) */}
+                                      {healthSummary ? (
+                                        <View style={[styles.aiInsightsCard, { borderColor: 'rgba(56, 189, 248, 0.25)', marginTop: 8 }]}>
+                                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                              <Activity size={16} color="#38BDF8" />
+                                              <Text style={[styles.aiCardTitle, { color: '#38BDF8' }]}>Medical Health Condition Summary</Text>
+                                            </View>
+                                            <View style={[styles.aiModelBadge, { backgroundColor: 'rgba(56, 189, 248, 0.1)', borderColor: 'rgba(56, 189, 248, 0.3)' }]}>
+                                              <Text style={[styles.aiModelBadgeText, { color: '#38BDF8' }]}>
+                                                {healthSummary.analysisStatus || 'Analysis Completed'}
+                                              </Text>
+                                            </View>
+                                          </View>
+
+                                          {/* Report & Generation Dates */}
+                                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 8, borderBottomWidth: 1, borderColor: 'rgba(255, 255, 255, 0.06)' }}>
+                                            <Text style={{ fontSize: 11, color: C.muted }}>
+                                              Report Date: <Text style={{ color: '#fff', fontWeight: '600' }}>{formatDateTime(healthSummary.reportDate || report.uploadDate)}</Text>
+                                            </Text>
+                                            {healthSummary.summaryGenerationDate && (
+                                              <Text style={{ fontSize: 11, color: C.muted }}>
+                                                Summary Generated: <Text style={{ color: '#38BDF8', fontWeight: '600' }}>{formatDateTime(healthSummary.summaryGenerationDate)}</Text>
+                                              </Text>
+                                            )}
+                                          </View>
+
+                                          {/* 1. Overall Health Summary */}
+                                          {healthSummary.overallHealthSummary ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Overall Health Summary</Text>
+                                              <Text style={styles.aiInsightText}>{healthSummary.overallHealthSummary}</Text>
+                                            </View>
+                                          ) : null}
+
+                                          {/* 2. Reported Medical Conditions */}
+                                          {Array.isArray(healthSummary.reportedMedicalConditions) && healthSummary.reportedMedicalConditions.length > 0 ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Reported Medical Conditions</Text>
+                                              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                                                {healthSummary.reportedMedicalConditions.map((cond, ci) => (
+                                                  <View key={ci} style={[styles.foodBenefitPill, { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.25)' }]}>
+                                                    <Text style={[styles.foodBenefitText, { color: '#EF4444' }]}>{cond}</Text>
+                                                  </View>
+                                                ))}
+                                              </View>
+                                            </View>
+                                          ) : null}
+
+                                          {/* 3. Abnormal Laboratory Values */}
+                                          {Array.isArray(healthSummary.abnormalLaboratoryValues) && healthSummary.abnormalLaboratoryValues.length > 0 ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={[styles.aiInsightHeading, { color: '#EF4444' }]}>Abnormal Laboratory Values ({healthSummary.abnormalLaboratoryValues.length})</Text>
+                                              <View style={{ gap: 4, marginTop: 4 }}>
+                                                {healthSummary.abnormalLaboratoryValues.map((ab, ai) => (
+                                                  <View key={ai} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(239, 68, 68, 0.05)', padding: 6, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.15)' }}>
+                                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>{ab.test}</Text>
+                                                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#EF4444' }}>
+                                                      {ab.result} {ab.unit} ({ab.status} • Ref: {ab.referenceRange})
+                                                    </Text>
+                                                  </View>
+                                                ))}
+                                              </View>
+                                            </View>
+                                          ) : (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Abnormal Laboratory Values</Text>
+                                              <Text style={{ fontSize: 11, color: '#10B981' }}>✓ All measured laboratory values are within normal reference ranges.</Text>
+                                            </View>
+                                          )}
+
+                                          {/* 4. Normal Laboratory Values */}
+                                          {Array.isArray(healthSummary.normalLaboratoryValues) && healthSummary.normalLaboratoryValues.length > 0 ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={[styles.aiInsightHeading, { color: '#10B981' }]}>Normal Laboratory Values ({healthSummary.normalLaboratoryValues.length} Biomarkers)</Text>
+                                              <Text style={styles.aiInsightText}>
+                                                {healthSummary.normalLaboratoryValues.map(n => n.test).join(', ')}
+                                              </Text>
+                                            </View>
+                                          ) : null}
+
+                                          {/* 5. Potential Nutritional Considerations */}
+                                          {healthSummary.potentialNutritionalConsiderations ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Potential Nutritional Considerations</Text>
+                                              <Text style={styles.aiInsightText}>{healthSummary.potentialNutritionalConsiderations}</Text>
+                                            </View>
+                                          ) : null}
+
+                                          {/* 6. Dietary Recommendations Relevant to FoodieBite */}
+                                          {Array.isArray(healthSummary.dietaryRecommendationsRelevantToFoodieBite) && healthSummary.dietaryRecommendationsRelevantToFoodieBite.length > 0 ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={styles.aiInsightHeading}>Dietary Recommendations Relevant to FoodieBite</Text>
+                                              <View style={{ gap: 6, marginTop: 4 }}>
+                                                {healthSummary.dietaryRecommendationsRelevantToFoodieBite.map((item, ii) => (
+                                                  <View key={ii} style={styles.foodSuggestionCard}>
+                                                    <Text style={styles.foodSuggestionTitle}>{item.foodName || item.name}</Text>
+                                                    <Text style={styles.foodSuggestionReason}>{item.reason || item.benefits}</Text>
+                                                  </View>
+                                                ))}
+                                              </View>
+                                            </View>
+                                          ) : null}
+
+                                          {/* 7. Items Requiring Medical Follow-up */}
+                                          {Array.isArray(healthSummary.itemsRequiringMedicalFollowUp) && healthSummary.itemsRequiringMedicalFollowUp.length > 0 ? (
+                                            <View style={styles.aiInsightBlock}>
+                                              <Text style={[styles.aiInsightHeading, { color: '#F59E0B' }]}>Items Requiring Medical Follow-up</Text>
+                                              {healthSummary.itemsRequiringMedicalFollowUp.map((item, fi) => (
+                                                <View key={fi} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
+                                                  <AlertCircle size={12} color="#F59E0B" style={{ marginTop: 2 }} />
+                                                  <Text style={[styles.aiInsightText, { flex: 1, color: '#e2e8f0' }]}>{item}</Text>
+                                                </View>
+                                              ))}
+                                            </View>
+                                          ) : null}
+                                        </View>
+                                      ) : null}
+
+                                      {!intelligence && !healthSummary ? (
+                                        <View style={{ padding: 14, backgroundColor: C.card2, borderRadius: 10, alignItems: 'center', gap: 6 }}>
+                                          <Text style={{ fontSize: 12, color: C.muted }}>AI clinical insights have not yet been generated for this report.</Text>
+                                          <TouchableOpacity
+                                            onPress={() => handleAnalyzeReport(report.id)}
+                                            style={[styles.reportActionBtn, { backgroundColor: 'rgba(255, 107, 53, 0.15)', borderColor: C.orange, marginTop: 4 }]}
+                                          >
+                                            <Sparkles size={13} color={C.orange} style={{ marginRight: 6 }} />
+                                            <Text style={[styles.reportActionBtnText, { color: C.orange }]}>Run Local Ollama Analysis Now</Text>
+                                          </TouchableOpacity>
+                                        </View>
+                                      ) : null}
+                                    </View>
+                                  )}
+                                </View>
+                              )}
+                            </View>
+                          );
+                        })}
+                      </View>
+                    )}
                   </View>
 
                   {/* SECTION 1: SENT EMAIL HISTORY */}
@@ -1426,16 +2308,18 @@ export default function AdminDashboardScreen() {
                       </View>
                     )}
                     <ScrollView horizontal showsHorizontalScrollIndicator={true} contentContainerStyle={{ minWidth: '100%' }}>
-                      <View style={{ minWidth: 680, flex: 1 }}>
+                      <View style={{ minWidth: 840, flex: 1 }}>
                         {/* Table Header Row */}
                         <View style={styles.tableHeaderRow}>
                           <Text style={[styles.tableHeaderCell, { width: 44, textAlign: 'center' }]}>S.No</Text>
                           <Text style={[styles.tableHeaderCell, { flex: 1.4, paddingLeft: 8 }]}>User & Provider</Text>
-                          <Text style={[styles.tableHeaderCell, { flex: 1.8 }]}>Email Address</Text>
-                          <Text style={[styles.tableHeaderCell, { flex: 1.1 }]}>Registered</Text>
-                          <Text style={[styles.tableHeaderCell, { flex: 1.1 }]}>Last Login</Text>
+                          <Text style={[styles.tableHeaderCell, { flex: 1.6 }]}>Email Address</Text>
+                          <Text style={[styles.tableHeaderCell, { flex: 1.2 }]}>Diet & Cuisines</Text>
+                          <Text style={[styles.tableHeaderCell, { width: 68, textAlign: 'center' }]}>Reports</Text>
+                          <Text style={[styles.tableHeaderCell, { flex: 1.0 }]}>Registered</Text>
+                          <Text style={[styles.tableHeaderCell, { flex: 1.0 }]}>Last Login</Text>
                           <Text style={[styles.tableHeaderCell, { width: 78, textAlign: 'center' }]}>Status</Text>
-                          <Text style={[styles.tableHeaderCell, { width: 32, textAlign: 'center' }]}></Text>
+                          <Text style={[styles.tableHeaderCell, { width: 30, textAlign: 'center' }]}></Text>
                         </View>
 
                         {/* Table Body */}
@@ -1490,27 +2374,59 @@ export default function AdminDashboardScreen() {
                                 </View>
 
                                 {/* 3. Email Address */}
-                                <View style={{ flex: 1.8, paddingRight: 6 }}>
+                                <View style={{ flex: 1.6, paddingRight: 6 }}>
                                   <Text style={[styles.tableCellText, { color: '#cbd5e1' }]} numberOfLines={1}>
                                     {user.email || 'No email provided'}
                                   </Text>
                                 </View>
 
-                                {/* 4. Registered Date */}
-                                <View style={{ flex: 1.1, paddingRight: 6 }}>
+                                {/* 4. Diet & Cuisines */}
+                                <View style={{ flex: 1.2, paddingRight: 6 }}>
+                                  {(() => {
+                                    const b = getDietBadgeStyle(user.dietType || user.preferences?.dietType);
+                                    const cuisines = user.cuisines || user.preferences?.cuisines || [];
+                                    return (
+                                      <View style={{ gap: 2 }}>
+                                        <View style={[styles.dietBadge, { backgroundColor: b.bg, borderColor: b.border, alignSelf: 'flex-start' }]}>
+                                          <Text style={[styles.dietBadgeText, { color: b.color, fontSize: 10 }]}>{b.label}</Text>
+                                        </View>
+                                        {cuisines.length > 0 ? (
+                                          <Text style={{ fontSize: 10, color: C.muted }} numberOfLines={1}>
+                                            {cuisines.slice(0, 2).join(', ')}
+                                          </Text>
+                                        ) : null}
+                                      </View>
+                                    );
+                                  })()}
+                                </View>
+
+                                {/* 5. Medical Reports Count Badge */}
+                                <View style={{ width: 68, alignItems: 'center' }}>
+                                  {(user.medicalReportsCount || 0) > 0 ? (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255, 107, 53, 0.15)', borderColor: 'rgba(255, 107, 53, 0.4)', borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10 }}>
+                                      <FileText size={10} color={C.orange} />
+                                      <Text style={{ fontSize: 11, fontWeight: '700', color: C.orange }}>{user.medicalReportsCount}</Text>
+                                    </View>
+                                  ) : (
+                                    <Text style={{ fontSize: 11, color: '#64748b' }}>0</Text>
+                                  )}
+                                </View>
+
+                                {/* 6. Registered Date */}
+                                <View style={{ flex: 1.0, paddingRight: 6 }}>
                                   <Text style={[styles.tableCellText, { color: C.muted, fontSize: 11 }]} numberOfLines={1}>
                                     {regDate}
                                   </Text>
                                 </View>
 
-                                {/* 5. Last Login */}
-                                <View style={{ flex: 1.1, paddingRight: 6 }}>
+                                {/* 7. Last Login */}
+                                <View style={{ flex: 1.0, paddingRight: 6 }}>
                                   <Text style={[styles.tableCellText, { color: '#94a3b8', fontSize: 11 }]} numberOfLines={1}>
                                     {lastLogin}
                                   </Text>
                                 </View>
 
-                                {/* 6. Status */}
+                                {/* 8. Status */}
                                 <View style={{ width: 78, alignItems: 'center' }}>
                                   <View style={[styles.userStatusBadge, { backgroundColor: status.bg, borderColor: status.border }]}>
                                     <Text style={[styles.userStatusBadgeText, { color: status.text }]}>
@@ -1520,7 +2436,7 @@ export default function AdminDashboardScreen() {
                                 </View>
 
                                 {/* Action chevron */}
-                                <View style={{ width: 32, alignItems: 'center' }}>
+                                <View style={{ width: 30, alignItems: 'center' }}>
                                   <ChevronRight size={15} color={C.muted} />
                                 </View>
                               </TouchableOpacity>
@@ -1590,197 +2506,580 @@ export default function AdminDashboardScreen() {
               </React.Suspense>
             )}
 
-            {/* FOOD MANAGEMENT TAB */}
+            {/* FOOD DATABASE MANAGEMENT TAB */}
             {activeTab === 'foods' && (
               <View style={{ gap: 16 }}>
                 {/* Header card with summary */}
                 <View style={styles.foodMgmtHeaderCard}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <Utensils size={20} color={C.orange} />
-                      <Text style={styles.foodMgmtTitle}>Restaurant & Food Discovery Management</Text>
+                      <Database size={20} color={C.orange} />
+                      <Text style={styles.foodMgmtTitle}>Food Database Management & Catalog</Text>
                     </View>
                     <TouchableOpacity
-                      onPress={async () => {
-                        setLoadingRequests(true);
-                        try {
-                          const res = await apiAdminGetRestaurantRequests();
-                          if (res?.requests) setRestaurantRequests(res.requests);
-                        } finally {
-                          setLoadingRequests(false);
-                        }
-                      }}
+                      onPress={loadFoodsData}
                       style={styles.refreshSmallBtn}
+                      disabled={loadingFoods || loadingMoreFoods}
                     >
                       <RefreshCw size={13} color={C.orange} />
-                      <Text style={styles.refreshSmallBtnText}>Refresh</Text>
+                      <Text style={styles.refreshSmallBtnText}>
+                        {loadingFoods ? 'Refreshing...' : 'Refresh Database'}
+                      </Text>
                     </TouchableOpacity>
                   </View>
                   <Text style={styles.foodMgmtSub}>
-                    Manage merchant onboarding requests, live OpenStreetMap discovery caches, and allergen compliance standards.
+                    Unified catalog of verified FoodieBite food knowledge records from primary knowledge base and fallback datasets. Includes complete nutritional profiles, spice levels, allergens, and dietary classifications.
                   </Text>
                 </View>
 
-                {/* Filter selector: ALL, PENDING, APPROVED, REJECTED */}
-                <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-                  {[
-                    { id: 'ALL', label: `All Requests (${restaurantRequests.length})` },
-                    { id: 'PENDING', label: `Pending (${restaurantRequests.filter(r => (r.status || 'pending').toLowerCase() === 'pending').length})` },
-                    { id: 'APPROVED', label: `Approved (${restaurantRequests.filter(r => (r.status || '').toLowerCase() === 'approved').length})` },
-                    { id: 'REJECTED', label: `Rejected (${restaurantRequests.filter(r => (r.status || '').toLowerCase() === 'rejected').length})` }
-                  ].map(f => (
-                    <TouchableOpacity
-                      key={f.id}
-                      onPress={() => setRestaurantFilter(f.id)}
-                      style={[
-                        styles.filterTab,
-                        restaurantFilter === f.id ? { backgroundColor: C.card2, borderColor: C.border } : { backgroundColor: 'transparent', borderColor: 'transparent' }
-                      ]}
-                    >
-                      <Text style={[styles.filterTabText, restaurantFilter === f.id ? { color: '#fff' } : { color: C.muted }]}>
-                        {f.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                {/* 1. SEARCH & FILTER CONTROLS TOOLBAR */}
+                <View style={styles.foodFilterSection}>
+                  {/* Search Bar */}
+                  <View style={styles.foodSearchBar}>
+                    <Search size={16} color={C.muted} style={{ marginRight: 8 }} />
+                    <TextInput
+                      style={styles.foodSearchInput}
+                      placeholder="Search food by name, category, cuisine, or ingredient..."
+                      placeholderTextColor={C.muted}
+                      value={foodSearch}
+                      onChangeText={(text) => {
+                        setFoodSearch(text);
+                        loadFoodDatabase(1, { q: text }, false);
+                      }}
+                      returnKeyType="search"
+                    />
+                    {foodSearch.length > 0 && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setFoodSearch('');
+                          loadFoodDatabase(1, { q: '' }, false);
+                        }}
+                        style={{ padding: 4 }}
+                      >
+                        <X size={14} color={C.muted} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Dietary Filters */}
+                  <View style={{ gap: 8 }}>
+                    <Text style={styles.filterGroupLabel}>Dietary Filter:</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                      {['ALL', 'Vegetarian', 'Non-Vegetarian', 'Vegan', 'Eggetarian'].map((diet) => {
+                        const active = foodDietFilter === diet;
+                        return (
+                          <TouchableOpacity
+                            key={diet}
+                            onPress={() => {
+                              setFoodDietFilter(diet);
+                              loadFoodDatabase(1, { dietType: diet }, false);
+                            }}
+                            style={[styles.foodFilterPill, active && styles.foodFilterPillActive]}
+                          >
+                            <Text style={[styles.foodFilterPillText, active && styles.foodFilterPillTextActive]}>
+                              {diet === 'ALL' ? 'All Diets' : diet}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+
+                  {/* Category Filters */}
+                  <View style={{ gap: 8 }}>
+                    <Text style={styles.filterGroupLabel}>Category Filter:</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+                      {['ALL', 'Curry', 'Dal / Legume', 'Rice / Biryani', 'Grain / Bread', 'Breakfast', 'Snack', 'Dessert / Sweet', 'Beverage', 'Salad', 'Soup', 'Protein', 'Vegetable'].map((cat) => {
+                        const active = foodCategoryFilter === cat;
+                        return (
+                          <TouchableOpacity
+                            key={cat}
+                            onPress={() => {
+                              setFoodCategoryFilter(cat);
+                              loadFoodDatabase(1, { category: cat }, false);
+                            }}
+                            style={[styles.foodFilterPill, active && styles.foodFilterPillActive]}
+                          >
+                            <Text style={[styles.foodFilterPillText, active && styles.foodFilterPillTextActive]}>
+                              {cat === 'ALL' ? 'All Categories' : cat}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+
+                  {/* Cuisine & Spice Level & Sorting Row */}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+                    {/* Cuisine selector */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Text style={styles.filterGroupLabel}>Cuisine:</Text>
+                      {['ALL', 'North Indian', 'South Indian', 'Mughlai', 'Indo-Chinese', 'Punjabi', 'Bengali', 'Italian'].map((cui) => {
+                        const active = foodCuisineFilter === cui;
+                        return (
+                          <TouchableOpacity
+                            key={cui}
+                            onPress={() => {
+                              setFoodCuisineFilter(cui);
+                              loadFoodDatabase(1, { cuisine: cui }, false);
+                            }}
+                            style={[styles.foodFilterPillSmall, active && styles.foodFilterPillActive]}
+                          >
+                            <Text style={[styles.foodFilterPillSmallText, active && styles.foodFilterPillTextActive]}>
+                              {cui === 'ALL' ? 'All Cuisines' : cui}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Spice Level selector */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Text style={styles.filterGroupLabel}>Spice Level:</Text>
+                      {['ALL', 'Mild', 'Medium', 'Spicy', 'Very Spicy'].map((sp) => {
+                        const active = foodSpiceFilter === sp;
+                        return (
+                          <TouchableOpacity
+                            key={sp}
+                            onPress={() => {
+                              setFoodSpiceFilter(sp);
+                              loadFoodDatabase(1, { spiceLevel: sp }, false);
+                            }}
+                            style={[styles.foodFilterPillSmall, active && styles.foodFilterPillActive]}
+                          >
+                            <Text style={[styles.foodFilterPillSmallText, active && styles.foodFilterPillTextActive]}>
+                              {sp === 'ALL' ? 'All Spice' : sp}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Seasonality selector */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Text style={styles.filterGroupLabel}>Season:</Text>
+                      {['ALL', 'All Season', 'Summer', 'Winter', 'Monsoon'].map((sea) => {
+                        const active = foodSeasonalityFilter === sea;
+                        return (
+                          <TouchableOpacity
+                            key={sea}
+                            onPress={() => {
+                              setFoodSeasonalityFilter(sea);
+                              loadFoodDatabase(1, { seasonality: sea }, false);
+                            }}
+                            style={[styles.foodFilterPillSmall, active && styles.foodFilterPillActive]}
+                          >
+                            <Text style={[styles.foodFilterPillSmallText, active && styles.foodFilterPillTextActive]}>
+                              {sea === 'ALL' ? 'All Seasons' : sea}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Sorting selector */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Text style={styles.filterGroupLabel}>Sort By:</Text>
+                      {[
+                        { label: 'Name A-Z', by: 'name', ord: 'asc' },
+                        { label: 'Calories ↑', by: 'calories', ord: 'asc' },
+                        { label: 'Calories ↓', by: 'calories', ord: 'desc' },
+                        { label: 'Protein ↓', by: 'protein', ord: 'desc' },
+                      ].map((s) => {
+                        const active = foodSortBy === s.by && foodSortOrder === s.ord;
+                        return (
+                          <TouchableOpacity
+                            key={s.label}
+                            onPress={() => {
+                              setFoodSortBy(s.by);
+                              setFoodSortOrder(s.ord);
+                              loadFoodDatabase(1, { sortBy: s.by, sortOrder: s.ord }, false);
+                            }}
+                            style={[styles.foodFilterPillSmall, active && styles.foodFilterPillActive]}
+                          >
+                            <Text style={[styles.foodFilterPillSmallText, active && styles.foodFilterPillTextActive]}>
+                              {s.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
                 </View>
 
-                {/* Requests List */}
-                <View style={{ gap: 12 }}>
-                  {(() => {
-                    const filteredReqs = restaurantRequests.filter(r => {
-                      if (restaurantFilter === 'ALL') return true;
-                      return (r.status || 'pending').toUpperCase() === restaurantFilter;
-                    });
+                {/* 2. FOOD RECORDS CATALOG GRID */}
+                <View style={{ gap: 16 }}>
+                  {loadingFoods ? (
+                    <View style={styles.loadingBox}>
+                      <ActivityIndicator size="small" color={C.orange} />
+                      <Text style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>Querying food catalog...</Text>
+                    </View>
+                  ) : foodError ? (
+                    <View style={styles.emptyCardBox}>
+                      <AlertCircle size={36} color="#EF4444" style={{ marginBottom: 10 }} />
+                      <Text style={[styles.emptyStateTitle, { color: '#EF4444' }]}>Unable to Load Food Database</Text>
+                      <Text style={styles.emptyStateSub}>{foodError}</Text>
+                      <TouchableOpacity
+                        style={[styles.primaryBtn, { marginTop: 14, paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }]}
+                        onPress={() => loadFoodsData()}
+                      >
+                        <RefreshCw size={14} color="#FFF" style={{ marginRight: 6 }} />
+                        <Text style={styles.primaryBtnText}>Retry Loading</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : foodItems.length === 0 ? (
+                    <View style={styles.emptyCardBox}>
+                      <Database size={36} color="#334155" style={{ marginBottom: 10 }} />
+                      <Text style={styles.emptyStateTitle}>
+                        {(foodSearch || foodCategoryFilter !== 'ALL' || foodCuisineFilter !== 'ALL' || foodDietFilter !== 'ALL' || foodSpiceFilter !== 'ALL' || foodSeasonalityFilter !== 'ALL')
+                          ? 'No Food Records Match Filters'
+                          : 'No Food Records Available'}
+                      </Text>
+                      <Text style={styles.emptyStateSub}>
+                        {(foodSearch || foodCategoryFilter !== 'ALL' || foodCuisineFilter !== 'ALL' || foodDietFilter !== 'ALL' || foodSpiceFilter !== 'ALL' || foodSeasonalityFilter !== 'ALL')
+                          ? 'Try adjusting your search query, diet type, category, or cuisine filter.'
+                          : 'The unified food catalog is empty or currently initializing.'}
+                      </Text>
+                      {(foodSearch || foodCategoryFilter !== 'ALL' || foodCuisineFilter !== 'ALL' || foodDietFilter !== 'ALL' || foodSpiceFilter !== 'ALL' || foodSeasonalityFilter !== 'ALL') && (
+                        <TouchableOpacity
+                          style={[styles.outlineBtn, { marginTop: 14, paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }]}
+                          onPress={handleResetFoodFilters}
+                        >
+                          <RefreshCw size={14} color={C.orange} style={{ marginRight: 6 }} />
+                          <Text style={[styles.outlineBtnText, { color: C.orange }]}>Reset All Filters</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ) : (
+                    <View>
+                      {/* Responsive Grid Container */}
+                      <View style={styles.foodGridContainer}>
+                        {foodItems.map((food) => {
+                          const isVeg = (food.dietType || '').toLowerCase() === 'vegetarian';
+                          const isNonVeg = (food.dietType || '').toLowerCase() === 'non-vegetarian';
+                          const isVegan = (food.dietType || '').toLowerCase() === 'vegan';
+                          const isEgg = (food.dietType || '').toLowerCase() === 'eggetarian';
 
-                    if (filteredReqs.length === 0) {
-                      return (
-                        <View style={styles.emptyCardBox}>
-                          <Store size={36} color="#334155" style={{ marginBottom: 10 }} />
-                          <Text style={styles.emptyStateTitle}>No Restaurant Requests Found</Text>
-                          <Text style={styles.emptyStateSub}>
-                            {restaurantFilter === 'PENDING'
-                              ? 'All incoming merchant onboarding requests have been verified and processed.'
-                              : 'No restaurant applications matching this filter.'}
-                          </Text>
-                        </View>
-                      );
-                    }
+                          let dietColor = '#10B981';
+                          let dietBg = 'rgba(16, 185, 129, 0.12)';
+                          if (isNonVeg) {
+                            dietColor = '#EF4444';
+                            dietBg = 'rgba(239, 68, 68, 0.12)';
+                          } else if (isVegan) {
+                            dietColor = '#34D399';
+                            dietBg = 'rgba(52, 211, 153, 0.12)';
+                          } else if (isEgg) {
+                            dietColor = '#F59E0B';
+                            dietBg = 'rgba(245, 158, 11, 0.12)';
+                          }
 
-                    return filteredReqs.map(req => {
-                      const isPending = (req.status || 'pending').toLowerCase() === 'pending';
-                      const isApproved = (req.status || '').toLowerCase() === 'approved';
-                      const isRejected = (req.status || '').toLowerCase() === 'rejected';
-
-                      let badgeColor = '#F59E0B';
-                      let badgeBg = 'rgba(245, 158, 11, 0.12)';
-                      if (isApproved) {
-                        badgeColor = '#10B981';
-                        badgeBg = 'rgba(16, 185, 129, 0.12)';
-                      } else if (isRejected) {
-                        badgeColor = '#EF4444';
-                        badgeBg = 'rgba(239, 68, 68, 0.12)';
-                      }
-
-                      return (
-                        <View key={req.id} style={styles.reqCard}>
-                          <View style={styles.reqCardHeader}>
-                            <View style={{ flex: 1 }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                <Text style={styles.reqRestaurantName}>{req.restaurantName || req.name || 'Unnamed Merchant'}</Text>
-                                <View style={[styles.reqStatusBadge, { backgroundColor: badgeBg }]}>
-                                  <Text style={[styles.reqStatusText, { color: badgeColor }]}>
-                                    {(req.status || 'PENDING').toUpperCase()}
+                          return (
+                            <TouchableOpacity
+                              key={food.id}
+                              style={styles.foodGridCard}
+                              onPress={() => handleSelectFoodItem(food)}
+                              activeOpacity={0.88}
+                            >
+                              {/* Food Image with Fallback Placeholder */}
+                              <View style={styles.foodGridThumbWrap}>
+                                <FoodCardImage uri={food.image} name={food.name} category={food.category} />
+                                <View style={[styles.foodGridDietBadge, { backgroundColor: dietBg, borderColor: dietColor }]}>
+                                  <Text style={[styles.foodGridDietBadgeText, { color: dietColor }]}>
+                                    {food.dietType || 'Vegetarian'}
                                   </Text>
                                 </View>
                               </View>
-                              <Text style={styles.reqCuisineSub}>{req.cuisine || 'Multi-Cuisine'} • {req.dietaryOptions || 'Standard'}</Text>
-                            </View>
-                            <Text style={styles.reqDateText}>
-                              {formatDateOnly(req.createdAt || req.submittedAt)}
+
+                              {/* Card Content */}
+                              <View style={styles.foodGridBody}>
+                                <View style={{ gap: 6 }}>
+                                  <Text style={styles.foodGridName} numberOfLines={1}>{food.name}</Text>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                    <View style={styles.categoryBadge}>
+                                      <Text style={styles.categoryBadgeText}>{food.category || 'General'}</Text>
+                                    </View>
+                                    {food.cuisine ? (
+                                      <View style={styles.cuisineBadge}>
+                                        <Text style={styles.cuisineBadgeText}>{food.cuisine}</Text>
+                                      </View>
+                                    ) : null}
+                                    {food.spiceLevel ? (
+                                      <View style={styles.spiceBadge}>
+                                        <Flame size={10} color={C.orange} style={{ marginRight: 2 }} />
+                                        <Text style={styles.spiceBadgeText}>{food.spiceLevel}</Text>
+                                      </View>
+                                    ) : null}
+                                  </View>
+                                </View>
+
+                                {/* Short Description */}
+                                {food.description ? (
+                                  <Text style={styles.foodGridDesc} numberOfLines={2}>
+                                    {food.description}
+                                  </Text>
+                                ) : null}
+
+                                {/* Nutrition Highlight Row */}
+                                <View style={styles.foodGridNutriPill}>
+                                  <View style={styles.foodGridNutriItem}>
+                                    <Text style={styles.foodGridNutriVal}>{food.calories || 0}</Text>
+                                    <Text style={styles.foodGridNutriUnit}>kcal</Text>
+                                  </View>
+                                  <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+                                  <View style={styles.foodGridNutriItem}>
+                                    <Text style={[styles.foodGridNutriVal, { color: '#10B981' }]}>{food.protein || 0}g</Text>
+                                    <Text style={styles.foodGridNutriUnit}>protein</Text>
+                                  </View>
+                                </View>
+
+                                {/* Card Footer: Source & Details CTA */}
+                                <View style={styles.foodGridFooter}>
+                                  <Text style={styles.foodSourceTag}>
+                                    {food.sourceDataset === 'curated_fallback' ? 'Curated' : 'Primary'}
+                                  </Text>
+                                  <View style={styles.viewFoodBtn}>
+                                    <Eye size={12} color="#fff" style={{ marginRight: 4 }} />
+                                    <Text style={styles.viewFoodBtnText}>Details</Text>
+                                  </View>
+                                </View>
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
+                      {/* 3. LOAD MORE FOODS BUTTON */}
+                      {foodItems.length > 0 && foodItems.length < foodTotalCount && foodPage < foodTotalPages && (
+                        <View style={{ alignItems: 'center', marginTop: 24, marginBottom: 12 }}>
+                          <TouchableOpacity
+                            style={[styles.loadMoreBtn, loadingMoreFoods && styles.loadMoreBtnDisabled]}
+                            onPress={handleLoadMoreFoods}
+                            disabled={loadingMoreFoods}
+                          >
+                            {loadingMoreFoods ? (
+                              <>
+                                <ActivityIndicator size="small" color={C.orange} style={{ marginRight: 8 }} />
+                                <Text style={styles.loadMoreBtnText}>Loading Next 12 Foods...</Text>
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown size={16} color={C.orange} style={{ marginRight: 6 }} />
+                                <Text style={styles.loadMoreBtnText}>
+                                  Load More Foods ({foodItems.length} of {foodTotalCount} shown)
+                                </Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      )}
+
+                      {/* ALL ITEMS LOADED MESSAGE */}
+                      {foodItems.length > 0 && (foodItems.length >= foodTotalCount || foodPage >= foodTotalPages) && (
+                        <View style={{ alignItems: 'center', marginTop: 20, marginBottom: 12 }}>
+                          <Text style={{ fontSize: 12, color: C.muted }}>
+                            All {foodTotalCount} food records loaded
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+
+                {/* 5. FOOD ITEM DETAILS MODAL / DRAWER */}
+                {selectedFoodItem && (
+                  <Modal
+                    visible={Boolean(selectedFoodItem)}
+                    transparent={true}
+                    animationType="fade"
+                    onRequestClose={() => setSelectedFoodItem(null)}
+                  >
+                    <View style={styles.modalOverlay}>
+                      <View style={styles.foodDetailModalCard}>
+                        {/* Modal Header */}
+                        <View style={styles.foodModalHeader}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.foodModalTitle}>{selectedFoodItem.name}</Text>
+                            <Text style={styles.foodModalSubtitle}>
+                              ID: {selectedFoodItem.id} • {selectedFoodItem.cuisine || 'Cuisine'} • {selectedFoodItem.category || 'Category'}
                             </Text>
                           </View>
+                          <TouchableOpacity
+                            onPress={() => setSelectedFoodItem(null)}
+                            style={styles.foodModalCloseBtn}
+                          >
+                            <X size={18} color="#fff" />
+                          </TouchableOpacity>
+                        </View>
 
-                          <View style={styles.reqDetailsGrid}>
-                            <View style={styles.reqDetailItem}>
-                              <Text style={styles.reqDetailLabel}>Contact Person:</Text>
-                              <Text style={styles.reqDetailValue}>{req.contactPerson || req.contactName || 'N/A'}</Text>
+                        <ScrollView style={{ maxHeight: 520 }} showsVerticalScrollIndicator={true}>
+                          <View style={{ gap: 14 }}>
+                            {/* Banner Image */}
+                            <Image
+                              source={{ uri: selectedFoodItem.image }}
+                              style={styles.foodModalBanner}
+                              resizeMode="cover"
+                            />
+
+                            {/* Badges Bar */}
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                              <View style={[styles.dietBadge, { paddingHorizontal: 8, paddingVertical: 4 }]}>
+                                <Text style={styles.dietBadgeText}>{selectedFoodItem.dietType || 'Vegetarian'}</Text>
+                              </View>
+                              <View style={[styles.categoryBadge, { paddingHorizontal: 8, paddingVertical: 4 }]}>
+                                <Text style={styles.categoryBadgeText}>{selectedFoodItem.category || 'General'}</Text>
+                              </View>
+                              <View style={[styles.cuisineBadge, { paddingHorizontal: 8, paddingVertical: 4 }]}>
+                                <Text style={styles.cuisineBadgeText}>{selectedFoodItem.cuisine || 'Standard'}</Text>
+                              </View>
+                              <View style={[styles.spiceBadge, { paddingHorizontal: 8, paddingVertical: 4 }]}>
+                                <Flame size={12} color={C.orange} style={{ marginRight: 4 }} />
+                                <Text style={styles.spiceBadgeText}>{selectedFoodItem.spiceLevel || 'Medium'} Spice</Text>
+                              </View>
+                              {selectedFoodItem.seasonality && (
+                                <View style={[styles.seasonBadge, { paddingHorizontal: 8, paddingVertical: 4 }]}>
+                                  <Text style={styles.seasonBadgeText}>{selectedFoodItem.seasonality}</Text>
+                                </View>
+                              )}
                             </View>
-                            <View style={styles.reqDetailItem}>
-                              <Text style={styles.reqDetailLabel}>Email:</Text>
-                              <Text style={styles.reqDetailValue}>{req.email || req.contactEmail || 'N/A'}</Text>
+
+                            {/* Description */}
+                            {selectedFoodItem.description ? (
+                              <View style={styles.foodDetailSectionBox}>
+                                <Text style={styles.foodDetailSectionTitle}>Description</Text>
+                                <Text style={styles.foodDetailDescText}>{selectedFoodItem.description}</Text>
+                              </View>
+                            ) : null}
+
+                            {/* Complete Nutritional Profile */}
+                            <View style={styles.foodDetailSectionBox}>
+                              <Text style={styles.foodDetailSectionTitle}>Nutritional Profile (per serving)</Text>
+                              <View style={styles.foodNutriCardGrid}>
+                                <View style={styles.foodNutriTile}>
+                                  <Text style={styles.foodNutriTileVal}>{selectedFoodItem.calories || 0}</Text>
+                                  <Text style={styles.foodNutriTileLabel}>Calories (kcal)</Text>
+                                </View>
+                                <View style={styles.foodNutriTile}>
+                                  <Text style={[styles.foodNutriTileVal, { color: '#10B981' }]}>{selectedFoodItem.protein || 0}g</Text>
+                                  <Text style={styles.foodNutriTileLabel}>Protein</Text>
+                                </View>
+                                <View style={styles.foodNutriTile}>
+                                  <Text style={[styles.foodNutriTileVal, { color: '#38BDF8' }]}>{selectedFoodItem.carbs || 0}g</Text>
+                                  <Text style={styles.foodNutriTileLabel}>Carbohydrates</Text>
+                                </View>
+                                <View style={styles.foodNutriTile}>
+                                  <Text style={[styles.foodNutriTileVal, { color: '#F59E0B' }]}>{selectedFoodItem.fat || 0}g</Text>
+                                  <Text style={styles.foodNutriTileLabel}>Total Fat</Text>
+                                </View>
+                                <View style={styles.foodNutriTile}>
+                                  <Text style={[styles.foodNutriTileVal, { color: '#A855F7' }]}>{selectedFoodItem.fiber || 0}g</Text>
+                                  <Text style={styles.foodNutriTileLabel}>Dietary Fiber</Text>
+                                </View>
+                              </View>
                             </View>
-                            <View style={styles.reqDetailItem}>
-                              <Text style={styles.reqDetailLabel}>Phone:</Text>
-                              <Text style={styles.reqDetailValue}>{req.phone || req.contactPhone || 'N/A'}</Text>
+
+                            {/* Ingredients & Aliases */}
+                            {Array.isArray(selectedFoodItem.ingredients) && selectedFoodItem.ingredients.length > 0 ? (
+                              <View style={styles.foodDetailSectionBox}>
+                                <Text style={styles.foodDetailSectionTitle}>Ingredients</Text>
+                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                  {selectedFoodItem.ingredients.map((ing, idx) => (
+                                    <View key={idx} style={styles.foodIngredientChip}>
+                                      <Text style={styles.foodIngredientChipText}>{ing}</Text>
+                                    </View>
+                                  ))}
+                                </View>
+                              </View>
+                            ) : null}
+
+                            {/* Allergens */}
+                            <View style={styles.foodDetailSectionBox}>
+                              <Text style={styles.foodDetailSectionTitle}>Allergens & Dietary Compliance</Text>
+                              {Array.isArray(selectedFoodItem.allergens) && selectedFoodItem.allergens.length > 0 ? (
+                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                  {selectedFoodItem.allergens.map((alg, idx) => (
+                                    <View key={idx} style={styles.foodAllergenChip}>
+                                      <AlertTriangle size={11} color="#EF4444" style={{ marginRight: 4 }} />
+                                      <Text style={styles.foodAllergenChipText}>{alg}</Text>
+                                    </View>
+                                  ))}
+                                </View>
+                              ) : (
+                                <View style={styles.foodAllergenSafeChip}>
+                                  <CheckCircle size={12} color="#10B981" style={{ marginRight: 5 }} />
+                                  <Text style={styles.foodAllergenSafeText}>No common allergens reported (Allergen-safe profile)</Text>
+                                </View>
+                              )}
                             </View>
-                            <View style={styles.reqDetailItem}>
-                              <Text style={styles.reqDetailLabel}>Location:</Text>
-                              <Text style={styles.reqDetailValue}>{req.address || req.city || 'Chennai, India'}</Text>
+
+                            {/* Health & Dietary Tags */}
+                            {Array.isArray(selectedFoodItem.healthTags) && selectedFoodItem.healthTags.length > 0 ? (
+                              <View style={styles.foodDetailSectionBox}>
+                                <Text style={styles.foodDetailSectionTitle}>Health & Nutritional Tags</Text>
+                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                  {selectedFoodItem.healthTags.map((tag, idx) => (
+                                    <View key={idx} style={styles.foodHealthTagChip}>
+                                      <Text style={styles.foodHealthTagText}>#{tag}</Text>
+                                    </View>
+                                  ))}
+                                </View>
+                              </View>
+                            ) : null}
+
+                            {/* Preparation Metadata */}
+                            {selectedFoodItem.preparation ? (
+                              <View style={styles.foodDetailSectionBox}>
+                                <Text style={styles.foodDetailSectionTitle}>Preparation & Culinary Details</Text>
+                                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+                                  {selectedFoodItem.preparation.prepTimeMinutes ? (
+                                    <Text style={styles.foodPrepMetaText}>
+                                      Prep Time: <Text style={{ color: '#fff' }}>{selectedFoodItem.preparation.prepTimeMinutes} mins</Text>
+                                    </Text>
+                                  ) : null}
+                                  {selectedFoodItem.preparation.cookTimeMinutes ? (
+                                    <Text style={styles.foodPrepMetaText}>
+                                      Cook Time: <Text style={{ color: '#fff' }}>{selectedFoodItem.preparation.cookTimeMinutes} mins</Text>
+                                    </Text>
+                                  ) : null}
+                                  {selectedFoodItem.preparation.difficulty ? (
+                                    <Text style={styles.foodPrepMetaText}>
+                                      Difficulty: <Text style={{ color: C.orange }}>{selectedFoodItem.preparation.difficulty}</Text>
+                                    </Text>
+                                  ) : null}
+                                  {selectedFoodItem.preparation.servingSize ? (
+                                    <Text style={styles.foodPrepMetaText}>
+                                      Serving Size: <Text style={{ color: '#fff' }}>{selectedFoodItem.preparation.servingSize}</Text>
+                                    </Text>
+                                  ) : null}
+                                </View>
+                              </View>
+                            ) : null}
+
+                            {/* Source Metadata */}
+                            <View style={styles.foodDetailSourceBox}>
+                              <Info size={14} color="#94A3B8" style={{ marginRight: 6, marginTop: 2 }} />
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.foodDetailSourceTitle}>FoodieBite Grounded Data Source</Text>
+                                <Text style={styles.foodDetailSourceText}>
+                                  Source: {selectedFoodItem.sourceDataset === 'curated_fallback' ? 'foodiebiteFallbackFoods.js (Curated Fallback Dataset)' : 'foodKnowledge.js (Primary Food Knowledge Base)'} • ID: {selectedFoodItem.id}
+                                </Text>
+                              </View>
                             </View>
                           </View>
+                        </ScrollView>
 
-                          {req.notes ? (
-                            <View style={styles.reqNotesBox}>
-                              <Text style={styles.reqNotesText}>
-                                <Text style={{ fontWeight: '700', color: '#cbd5e1' }}>Merchant Notes: </Text>
-                                {req.notes}
-                              </Text>
-                            </View>
-                          ) : null}
-
-                          {req.rejectionReason ? (
-                            <View style={[styles.reqNotesBox, { borderColor: 'rgba(239, 68, 68, 0.3)' }]}>
-                              <Text style={[styles.reqNotesText, { color: '#F87171' }]}>
-                                <Text style={{ fontWeight: '700', color: '#F8FAFC' }}>Rejection Reason: </Text>
-                                {req.rejectionReason}
-                              </Text>
-                            </View>
-                          ) : null}
-
-                          {/* Approval Actions */}
-                          {isPending && (
-                            <View style={styles.reqActionRow}>
-                              <TouchableOpacity
-                                onPress={() => handleApproveRequest(req.id)}
-                                style={styles.approveBtn}
-                              >
-                                <Check size={14} color="#fff" />
-                                <Text style={styles.approveBtnText}>Approve & Publish</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                onPress={() => handleRejectRequest(req.id)}
-                                style={styles.rejectBtn}
-                              >
-                                <X size={14} color="#EF4444" />
-                                <Text style={styles.rejectBtnText}>Reject Application</Text>
-                              </TouchableOpacity>
-                            </View>
-                          )}
+                        {/* Modal Footer */}
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+                          <TouchableOpacity
+                            onPress={() => setSelectedFoodItem(null)}
+                            style={styles.modalCancelBtn}
+                          >
+                            <Text style={styles.modalCancelBtnText}>Close</Text>
+                          </TouchableOpacity>
                         </View>
-                      );
-                    });
-                  })()}
-                </View>
-
-                {/* Overpass Food Discovery Caching & Sync Card */}
-                <View style={styles.cacheControlCard}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <Compass size={18} color="#10B981" />
-                    <Text style={styles.cacheControlTitle}>Live OSM Discovery & Search Cache</Text>
-                  </View>
-                  <Text style={styles.cacheControlSub}>
-                    Local restaurants are indexed from OpenStreetMap Overpass API and cached in memory with a 15-minute TTL.
-                  </Text>
-                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                    <TouchableOpacity
-                      onPress={() => Alert.alert('Cache Purged', 'Local discovery cache cleared successfully.')}
-                      style={styles.purgeCacheBtn}
-                    >
-                      <Trash2 size={13} color="#fff" />
-                      <Text style={styles.purgeCacheBtnText}>Purge Search Cache</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                      </View>
+                    </View>
+                  </Modal>
+                )}
               </View>
             )}
 
@@ -2214,7 +3513,7 @@ function AdminFooter({ activeTab, onTabSelect }) {
     { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'campaigns', label: 'Campaigns', icon: Mail },
-    { id: 'foods', label: isMobile ? 'Foods' : 'Food Management', icon: Utensils },
+    { id: 'foods', label: isMobile ? 'Foods' : 'Food Database', icon: Database },
     { id: 'analytics', label: 'Analytics', icon: BarChart2 },
     { id: 'feedback', label: 'Feedback', icon: MessageSquare },
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
@@ -3057,6 +4356,269 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: C.muted2,
     alignSelf: 'flex-start',
+  },
+
+  // ── Preferences & Tags Styles ─────────────────
+  prefChip: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  prefChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#CBD5E1',
+    textTransform: 'capitalize',
+  },
+
+  // ── Medical Intelligence & Reports Styles ─────
+  privacyNoticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  privacyNoticeText: {
+    fontSize: 11,
+    color: '#38BDF8',
+    flex: 1,
+    lineHeight: 15,
+  },
+  actionProgressBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 107, 53, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 53, 0.3)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 6,
+  },
+  actionProgressText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: C.orange,
+  },
+  medicalReportCard: {
+    backgroundColor: C.card2,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+    gap: 10,
+  },
+  reportTitleText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  reportStatusPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  reportActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  reportActionBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  reportMetricsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  reportMetricBadge: {
+    flex: 1,
+    minWidth: 80,
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+  },
+  reportMetricNum: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  reportMetricLabel: {
+    fontSize: 9,
+    color: C.muted,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
+  reportExpandedSection: {
+    marginTop: 6,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  subSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  labTableContainer: {
+    backgroundColor: '#12151D',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  labTableHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+  },
+  labTableHeaderCell: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: C.muted,
+    textTransform: 'uppercase',
+  },
+  labTableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.03)',
+  },
+  labTableCell: {
+    fontSize: 11,
+  },
+  labStatusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  labStatusText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  aiInsightsCard: {
+    backgroundColor: '#12151D',
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 53, 0.25)',
+    gap: 12,
+  },
+  aiCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  aiModelBadge: {
+    backgroundColor: 'rgba(255, 107, 53, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 53, 0.3)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  aiModelBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: C.orange,
+  },
+  aiInsightBlock: {
+    gap: 4,
+  },
+  aiInsightHeading: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#cbd5e1',
+    textTransform: 'uppercase',
+  },
+  aiInsightText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    lineHeight: 17,
+  },
+  foodSuggestionCard: {
+    backgroundColor: C.card2,
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+    gap: 4,
+  },
+  foodSuggestionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  foodBenefitPill: {
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  foodBenefitText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#10B981',
+  },
+  foodSuggestionReason: {
+    fontSize: 11,
+    color: '#94a3b8',
+    lineHeight: 15,
+  },
+  medicalDisclaimerBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(245, 158, 11, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.25)',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 4,
+  },
+  medicalDisclaimerTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#F59E0B',
+    marginBottom: 2,
+    letterSpacing: 0.5,
+  },
+  medicalDisclaimerText: {
+    fontSize: 10,
+    color: '#cbd5e1',
+    lineHeight: 14,
   },
 
   // ── Administrator Login Portal Styles ─────────
@@ -4054,5 +5616,539 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: '700',
+  },
+
+  // Food Database Management Styles
+  foodStatsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  foodStatCard: {
+    flex: 1,
+    minWidth: 100,
+    backgroundColor: C.card,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: 'center',
+    gap: 4,
+  },
+  foodStatNum: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  foodStatLabel: {
+    fontSize: 10,
+    color: C.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  foodFilterSection: {
+    backgroundColor: C.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 14,
+    gap: 12,
+  },
+  foodSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#12151D',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingHorizontal: 10,
+    height: 38,
+  },
+  foodSearchInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 13,
+  },
+  filterGroupLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: C.muted,
+    textTransform: 'uppercase',
+  },
+  foodFilterPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  foodFilterPillActive: {
+    backgroundColor: 'rgba(255, 107, 53, 0.15)',
+    borderColor: C.orange,
+  },
+  foodFilterPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: C.muted,
+  },
+  foodFilterPillTextActive: {
+    color: C.orange,
+    fontWeight: '700',
+  },
+  foodFilterPillSmall: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  foodFilterPillSmallText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: C.muted,
+  },
+  foodGridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    justifyContent: 'flex-start',
+  },
+  foodGridCard: {
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 14,
+    overflow: 'hidden',
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 280,
+    minWidth: 260,
+    maxWidth: 380,
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  foodGridThumbWrap: {
+    width: '100%',
+    height: 150,
+    backgroundColor: '#1a1f2c',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  foodGridThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  foodGridFallbackImage: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#171B24',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 8,
+  },
+  foodGridFallbackText: {
+    fontSize: 10,
+    color: '#64748b',
+    marginTop: 4,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  foodGridDietBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  foodGridDietBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  foodGridBody: {
+    padding: 14,
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  foodGridName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+    lineHeight: 20,
+  },
+  foodGridDesc: {
+    fontSize: 12,
+    color: '#94a3b8',
+    lineHeight: 16,
+  },
+  foodGridNutriPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  foodGridNutriItem: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 3,
+  },
+  foodGridNutriVal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  foodGridNutriUnit: {
+    fontSize: 10,
+    color: C.muted,
+  },
+  foodGridFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  loadMoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.orange,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    minWidth: 240,
+  },
+  loadMoreBtnDisabled: {
+    opacity: 0.6,
+    borderColor: C.border,
+  },
+  loadMoreBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: C.orange,
+  },
+  foodRowCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: C.card,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 12,
+    padding: 12,
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  foodRowThumb: {
+    width: 68,
+    height: 68,
+    borderRadius: 8,
+    backgroundColor: '#1e2430',
+  },
+  foodRowName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  foodRowDesc: {
+    fontSize: 11,
+    color: '#94a3b8',
+    lineHeight: 15,
+  },
+  dietBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  dietBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  categoryBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+  },
+  categoryBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#38BDF8',
+  },
+  cuisineBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: 'rgba(168, 85, 247, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.25)',
+  },
+  cuisineBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#A855F7',
+  },
+  spiceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 107, 53, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 53, 0.25)',
+  },
+  spiceBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: C.orange,
+  },
+  seasonBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.25)',
+  },
+  seasonBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#F59E0B',
+  },
+  foodNutriBar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 4,
+  },
+  foodNutriItem: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 2,
+  },
+  foodNutriVal: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#e2e8f0',
+  },
+  foodNutriUnit: {
+    fontSize: 9,
+    color: C.muted,
+  },
+  foodRowActionCol: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  foodSourceTag: {
+    fontSize: 9,
+    color: C.muted,
+    textTransform: 'uppercase',
+  },
+  viewFoodBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: C.orange,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  viewFoodBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  foodPaginationWrap: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  foodPageRangeText: {
+    fontSize: 12,
+    color: C.muted,
+  },
+  foodDetailModalCard: {
+    backgroundColor: '#161922',
+    borderWidth: 1,
+    borderColor: '#2E3545',
+    borderRadius: 16,
+    padding: 20,
+    maxWidth: 640,
+    width: '100%',
+    maxHeight: '90%',
+  },
+  foodModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    paddingBottom: 10,
+  },
+  foodModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  foodModalSubtitle: {
+    fontSize: 11,
+    color: C.muted,
+    marginTop: 2,
+  },
+  foodModalCloseBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  foodModalBanner: {
+    width: '100%',
+    height: 180,
+    borderRadius: 10,
+    backgroundColor: '#1e2430',
+  },
+  foodDetailSectionBox: {
+    backgroundColor: '#12151D',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    gap: 8,
+  },
+  foodDetailSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  foodDetailDescText: {
+    fontSize: 12,
+    color: '#cbd5e1',
+    lineHeight: 18,
+  },
+  foodNutriCardGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  foodNutriTile: {
+    flex: 1,
+    minWidth: 80,
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+  },
+  foodNutriTileVal: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  foodNutriTileLabel: {
+    fontSize: 9,
+    color: C.muted,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
+  foodIngredientChip: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  foodIngredientChipText: {
+    fontSize: 11,
+    color: '#cbd5e1',
+  },
+  foodAllergenChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+  },
+  foodAllergenChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#EF4444',
+  },
+  foodAllergenSafeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+  },
+  foodAllergenSafeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#10B981',
+  },
+  foodHealthTagChip: {
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+  },
+  foodHealthTagText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#38BDF8',
+  },
+  foodPrepMetaText: {
+    fontSize: 11,
+    color: C.muted,
+  },
+  foodDetailSourceBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  foodDetailSourceTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  foodDetailSourceText: {
+    fontSize: 10,
+    color: C.muted,
+    marginTop: 2,
   },
 });

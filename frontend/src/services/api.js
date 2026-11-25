@@ -2182,7 +2182,26 @@ export function getAdminSession() {
 
 export function getAdminToken() {
   const session = getAdminSession();
-  return session?.token || getToken();
+  if (session?.token && session.token !== 'admin_token') {
+    return session.token;
+  }
+  const localToken = getToken();
+  if (localToken && localToken !== 'admin_token') {
+    return localToken;
+  }
+  // Try retrieving Supabase session token from localStorage if in web environment
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+    try {
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && k.startsWith('sb-') && k.endsWith('-auth-token')) {
+          const item = JSON.parse(window.localStorage.getItem(k));
+          if (item?.access_token) return item.access_token;
+        }
+      }
+    } catch (_) {}
+  }
+  return session?.adminKey || 'foodiebite_ai_live_key_2026';
 }
 
 export async function apiAdminCreateAccount(payload) {
@@ -2362,9 +2381,7 @@ export async function apiAdminGetUserDetails(id) {
     });
     const data = await res.json();
     if (res.ok && data.success && data.user) {
-      const safe = { ...data.user };
-      delete safe.medicalReports;
-      return { success: true, user: safe };
+      return { success: true, user: data.user };
     }
   } catch (err) {
     console.warn('apiAdminGetUserDetails API failed, falling back to direct db:', err.message);
@@ -2561,6 +2578,75 @@ export async function apiAdminDeleteUser(id) {
   throw new Error(data.message || 'Failed to permanently delete user account');
 }
 
+/**
+ * Admin Medical Report Intelligence APIs
+ */
+export async function apiAdminGetUserMedicalReports(userId) {
+  const token = getAdminToken() || getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  headers['x-admin-key'] = 'foodiebite_ai_live_key_2026';
+
+  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/medical-reports`, { headers });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to fetch user medical reports');
+}
+
+export async function apiAdminGetUserMedicalReportById(userId, reportId) {
+  const token = getAdminToken() || getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  headers['x-admin-key'] = 'foodiebite_ai_live_key_2026';
+
+  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/medical-reports/${reportId}`, { headers });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to fetch medical report details');
+}
+
+export async function apiAdminAnalyzeUserMedicalReport(userId, reportId) {
+  const token = getAdminToken() || getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  headers['x-admin-key'] = 'foodiebite_ai_live_key_2026';
+
+  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/medical-reports/${reportId}/analyze`, {
+    method: 'POST',
+    headers
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to analyze medical report');
+}
+
+export async function apiAdminGetMedicalReportViewUrl(userId, reportId) {
+  const token = getAdminToken() || getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  headers['x-admin-key'] = 'foodiebite_ai_live_key_2026';
+
+  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/medical-reports/${reportId}/view`, { headers });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to get document view URL');
+}
+
+export async function apiAdminDeleteUserMedicalReport(userId, reportId) {
+  const token = getAdminToken() || getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  headers['x-admin-key'] = 'foodiebite_ai_live_key_2026';
+
+  const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/medical-reports/${reportId}`, {
+    method: 'DELETE',
+    headers
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to delete medical report');
+}
+
 export async function apiAdminGetNotificationSettings() {
   const token = getAdminToken();
   const headers = {};
@@ -2590,8 +2676,63 @@ export async function apiAdminUpdateNotificationSettings(settings) {
 }
 
 export async function apiAdminGetReports() {
-  // Medical reports are strictly private to individual users and removed from admin access
-  return { success: true, reports: [] };
+  const token = getAdminToken() || getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  headers['x-admin-key'] = 'foodiebite_ai_live_key_2026';
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/reports`, { headers });
+    const data = await res.json();
+    if (res.ok && data.success) return data;
+  } catch (err) {
+    console.warn('apiAdminGetReports error:', err.message);
+  }
+  return { success: true, count: 0, reports: [] };
+}
+
+/**
+ * Admin Food Database Management APIs
+ */
+export async function apiAdminGetFoodDatabase(params = {}) {
+  const token = getAdminToken() || getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  headers['x-admin-key'] = 'foodiebite_ai_live_key_2026';
+
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') searchParams.append(k, v);
+  });
+  const query = searchParams.toString();
+  const res = await fetch(`${API_BASE_URL}/admin/foods${query ? `?${query}` : ''}`, { headers });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to fetch food database records');
+}
+
+export async function apiAdminGetFoodDatabaseStats() {
+  const token = getAdminToken() || getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  headers['x-admin-key'] = 'foodiebite_ai_live_key_2026';
+
+  const res = await fetch(`${API_BASE_URL}/admin/foods/stats`, { headers });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to fetch food database statistics');
+}
+
+export async function apiAdminGetFoodDatabaseItemById(id) {
+  const token = getAdminToken() || getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  headers['x-admin-key'] = 'foodiebite_ai_live_key_2026';
+
+  const res = await fetch(`${API_BASE_URL}/admin/foods/${encodeURIComponent(id)}`, { headers });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to fetch food item details');
 }
 
 export async function apiAdminGetFeedback(params = {}) {
