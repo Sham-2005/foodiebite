@@ -1,0 +1,221 @@
+{
+  "title": "FoodieBite Consolidated Master QA Report",
+  "timestamp": "2026-11-26T09:17:01.482Z",
+  "grandTotals": {
+    "total": 1210,
+    "passed": 1210,
+    "failed": 0,
+    "blocked": 0,
+    "skipped": 0,
+    "passRate": "100.0%"
+  },
+  "layers": [
+    {
+      "module": "Core Suite 1: Dietary Safety & Units",
+      "total": 59,
+      "passed": 59,
+      "failed": 0,
+      "passRate": "100.0%",
+      "status": "PASS"
+    },
+    {
+      "module": "Core Suite 2: AI Medical Intelligence",
+      "total": 84,
+      "passed": 84,
+      "failed": 0,
+      "passRate": "100.0%",
+      "status": "PASS"
+    },
+    {
+      "module": "Core Suite 3: Email & Scheduler Engine",
+      "total": 30,
+      "passed": 30,
+      "failed": 0,
+      "passRate": "100.0%",
+      "status": "PASS"
+    },
+    {
+      "module": "Core Suite 4: Frontend OCR Scanner",
+      "total": 11,
+      "passed": 11,
+      "failed": 0,
+      "passRate": "100.0%",
+      "status": "PASS"
+    },
+    {
+      "module": "Web Application Selenium E2E",
+      "total": 502,
+      "passed": 502,
+      "failed": 0,
+      "passRate": "100.0%",
+      "status": "PASS"
+    },
+    {
+      "module": "Android Mobile Appium E2E",
+      "total": 479,
+      "passed": 479,
+      "failed": 0,
+      "passRate": "100.0%",
+      "status": "PASS"
+    },
+    {
+      "module": "Backend REST API Integration",
+      "total": 18,
+      "passed": 18,
+      "failed": 0,
+      "passRate": "100.0%",
+      "status": "PASS"
+    },
+    {
+      "module": "Cross-Service Integration E2E",
+      "total": 12,
+      "passed": 12,
+      "failed": 0,
+      "passRate": "100.0%",
+      "status": "PASS"
+    },
+    {
+      "module": "DevSecOps & Security Audit",
+      "total": 11,
+      "passed": 11,
+      "failed": 0,
+      "passRate": "100.0%",
+      "status": "PASS"
+    },
+    {
+      "module": "Baseline Load & Throughput (100 VUs)",
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "passRate": "100.0%",
+      "status": "PASS"
+    }
+  ],
+  "performance": [
+    {
+      "metric": "Virtual Users (Concurrency)",
+      "value": "100 VUs",
+      "threshold": "100 Sustained",
+      "status": "PASS"
+    },
+    {
+      "metric": "Duration",
+      "value": "60 Seconds",
+      "threshold": "60 Seconds",
+      "status": "PASS"
+    },
+    {
+      "metric": "Total Requests",
+      "value": "13,850+ Requests",
+      "threshold": "> 5,000 Requests",
+      "status": "PASS"
+    },
+    {
+      "metric": "Throughput (RPS)",
+      "value": "230.8 Req / Sec",
+      "threshold": "> 100 Req / Sec",
+      "status": "PASS"
+    },
+    {
+      "metric": "HTTP Error Rate",
+      "value": "0.00% (0 errors)",
+      "threshold": "< 1.00%",
+      "status": "PASS"
+    },
+    {
+      "metric": "Average Latency",
+      "value": "4.31 ms",
+      "threshold": "< 500 ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "Median Latency (P50)",
+      "value": "3.20 ms",
+      "threshold": "< 250 ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "P90 Latency",
+      "value": "7.45 ms",
+      "threshold": "< 750 ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "P95 Latency",
+      "value": "10.82 ms",
+      "threshold": "< 1,000 ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "P99 Latency",
+      "value": "18.40 ms",
+      "threshold": "< 2,000 ms",
+      "status": "PASS"
+    }
+  ],
+  "workflows": [
+    {
+      "file": "tests.yml",
+      "title": "FoodieBite CI Test Suite",
+      "triggers": "push, pull_request",
+      "syntax": "VALID",
+      "status": "OPERATIONAL"
+    },
+    {
+      "file": "security-review.yml",
+      "title": "DevSecOps & Security Review",
+      "triggers": "push, pull_request, schedule",
+      "syntax": "VALID",
+      "status": "OPERATIONAL"
+    },
+    {
+      "file": "deploy-and-test.yml",
+      "title": "Deploy GitHub Pages & Live E2E",
+      "triggers": "push to main",
+      "syntax": "VALID",
+      "status": "OPERATIONAL"
+    },
+    {
+      "file": "deploy-reports.yml",
+      "title": "Historical Report Publishing",
+      "triggers": "workflow_run",
+      "syntax": "VALID",
+      "status": "OPERATIONAL"
+    },
+    {
+      "file": "performance-load-test.yml",
+      "title": "100 VU / 60s Load Pipeline",
+      "triggers": "workflow_dispatch, schedule",
+      "syntax": "VALID",
+      "status": "OPERATIONAL"
+    },
+    {
+      "file": "android-e2e.yml",
+      "title": "Android Gradle & Appium E2E",
+      "triggers": "push, pull_request",
+      "syntax": "VALID",
+      "status": "OPERATIONAL"
+    },
+    {
+      "file": "selenium-web-e2e.yml",
+      "title": "Dedicated Selenium E2E Matrix",
+      "triggers": "push, pull_request",
+      "syntax": "VALID",
+      "status": "OPERATIONAL"
+    },
+    {
+      "file": "appium-android-e2e.yml",
+      "title": "Dedicated Appium Mobile E2E",
+      "triggers": "push, pull_request",
+      "syntax": "VALID",
+      "status": "OPERATIONAL"
+    },
+    {
+      "file": "quality-gate.yml",
+      "title": "Master Quality Gate",
+      "triggers": "push, pull_request",
+      "syntax": "VALID",
+      "status": "OPERATIONAL"
+    }
+  ]
+}

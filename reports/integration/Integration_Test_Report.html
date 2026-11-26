@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FoodieBite QA Report — Cross-Service E2E Integration Suite</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 24px; background: #f8fafc; color: #1e293b; }
+    h1 { color: #1e3a8a; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+    .cards { display: flex; gap: 16px; margin-bottom: 24px; }
+    .card { background: white; padding: 16px 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); flex: 1; border-top: 4px solid #3b82f6; }
+    .card.pass { border-top-color: #10b981; }
+    .card.fail { border-top-color: #ef4444; }
+    .card h3 { margin: 0 0 4px; font-size: 13px; color: #64748b; text-transform: uppercase; }
+    .card .val { font-size: 28px; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th { background: #1e3a8a; color: white; padding: 12px; text-align: left; font-size: 13px; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+    tr:hover { background: #f8fafc; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .badge.pass { background: #dcfce7; color: #15803d; }
+    .badge.fail { background: #fee2e2; color: #b91c1c; }
+    .badge.blocked { background: #ffedd5; color: #c2410c; }
+    .badge.skipped { background: #f1f5f9; color: #64748b; }
+  </style>
+</head>
+<body>
+  <h1>FoodieBite QA Report — Cross-Service E2E Integration Suite</h1>
+  <div class="cards">
+    <div class="card"><div class="val">12</div><h3>Total Tests</h3></div>
+    <div class="card pass"><div class="val" style="color: #15803d">12</div><h3>Passed</h3></div>
+    <div class="card fail"><div class="val" style="color: #b91c1c">0</div><h3>Failed</h3></div>
+    <div class="card"><div class="val">100.0%</div><h3>Pass Rate</h3></div>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Test ID</th><th>Module</th><th>Test Name</th><th>Status</th><th>Duration</th><th>Actual Output</th></tr>
+    </thead>
+    <tbody>
+      
+      <tr class="pass">
+        <td><strong>INT-J1-001</strong></td>
+        <td>User Journey 1</td>
+        <td>Step 1: User Registration</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>220ms</td>
+        <td>HTTP 201: tokenAcquired=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J1-002</strong></td>
+        <td>User Journey 1</td>
+        <td>Step 2: Authenticate & Establish Session</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>6ms</td>
+        <td>HTTP 200: tokenAcquired=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J1-003</strong></td>
+        <td>User Journey 1</td>
+        <td>Step 3: Retrieve User Dietary Profile</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1021ms</td>
+        <td>HTTP 200: profileRetrieved=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J1-004</strong></td>
+        <td>User Journey 1</td>
+        <td>Step 4: Retrieve Personalized Recommendations</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>3747ms</td>
+        <td>HTTP 200: receivedRecommendations=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J1-005</strong></td>
+        <td>User Journey 1</td>
+        <td>Step 5: Query Specific Nutrient Catalog Dish</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>3185ms</td>
+        <td>HTTP 200: matches=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J1-006</strong></td>
+        <td>User Journey 1</td>
+        <td>Step 6: Retrieve Nutritional Detail for Single Dish</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>189ms</td>
+        <td>HTTP 200: itemFound=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J2-007</strong></td>
+        <td>User Journey 2</td>
+        <td>Step 7: Check Clinical Health Profile</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>573ms</td>
+        <td>HTTP 200: profileIngested=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J2-008</strong></td>
+        <td>User Journey 2</td>
+        <td>Step 8: AI Coach Clinical Dietary Consultation</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>4517ms</td>
+        <td>HTTP 200: advisoryReceived=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J3-009</strong></td>
+        <td>User Journey 3</td>
+        <td>Step 9: Admin System Metrics & Uptime Audit</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1227ms</td>
+        <td>HTTP 200: metricsAvailable=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J3-010</strong></td>
+        <td>User Journey 3</td>
+        <td>Step 10: Global Administrative Reports Review</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>779ms</td>
+        <td>HTTP 200: reportsAudited=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J4-011</strong></td>
+        <td>User Journey 4</td>
+        <td>Step 11: Malformed Body Syntax Handling</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>2ms</td>
+        <td>HTTP 400: Handled properly</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>INT-J4-012</strong></td>
+        <td>User Journey 4</td>
+        <td>Step 12: Invalid JWT Rejection & Protected Route Isolation</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1ms</td>
+        <td>HTTP 401: Access Denied as expected</td>
+      </tr>
+    
+    </tbody>
+  </table>
+</body>
+</html>

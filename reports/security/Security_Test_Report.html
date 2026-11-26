@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FoodieBite QA Report — Security & DevSecOps Audit Suite</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 24px; background: #f8fafc; color: #1e293b; }
+    h1 { color: #1e3a8a; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+    .cards { display: flex; gap: 16px; margin-bottom: 24px; }
+    .card { background: white; padding: 16px 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); flex: 1; border-top: 4px solid #3b82f6; }
+    .card.pass { border-top-color: #10b981; }
+    .card.fail { border-top-color: #ef4444; }
+    .card h3 { margin: 0 0 4px; font-size: 13px; color: #64748b; text-transform: uppercase; }
+    .card .val { font-size: 28px; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th { background: #1e3a8a; color: white; padding: 12px; text-align: left; font-size: 13px; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+    tr:hover { background: #f8fafc; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .badge.pass { background: #dcfce7; color: #15803d; }
+    .badge.fail { background: #fee2e2; color: #b91c1c; }
+    .badge.blocked { background: #ffedd5; color: #c2410c; }
+    .badge.skipped { background: #f1f5f9; color: #64748b; }
+  </style>
+</head>
+<body>
+  <h1>FoodieBite QA Report — Security & DevSecOps Audit Suite</h1>
+  <div class="cards">
+    <div class="card"><div class="val">11</div><h3>Total Tests</h3></div>
+    <div class="card pass"><div class="val" style="color: #15803d">11</div><h3>Passed</h3></div>
+    <div class="card fail"><div class="val" style="color: #b91c1c">0</div><h3>Failed</h3></div>
+    <div class="card"><div class="val">100.0%</div><h3>Pass Rate</h3></div>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Test ID</th><th>Module</th><th>Test Name</th><th>Status</th><th>Duration</th><th>Actual Output</th></tr>
+    </thead>
+    <tbody>
+      
+      <tr class="pass">
+        <td><strong>SEC-HDR-001</strong></td>
+        <td>HTTP Security Headers</td>
+        <td>X-Content-Type-Options Header Verification</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>16ms</td>
+        <td>Header value: "nosniff"</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>SEC-HDR-002</strong></td>
+        <td>HTTP Security Headers</td>
+        <td>X-Frame-Options Clickjacking Protection</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>16ms</td>
+        <td>Header value: "SAMEORIGIN"</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>SEC-HDR-003</strong></td>
+        <td>HTTP Security Headers</td>
+        <td>X-DNS-Prefetch-Control / Download Controls</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>16ms</td>
+        <td>Verified: helmet headers configured in server.js</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>SEC-CORS-004</strong></td>
+        <td>CORS Security</td>
+        <td>Whitelisted Origin Acceptance</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>2ms</td>
+        <td>CORS Header: "http://localhost:3000"</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>SEC-CORS-005</strong></td>
+        <td>CORS Security</td>
+        <td>Malicious Unauthorized Origin Rejection</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1ms</td>
+        <td>Unauthorized origin allow header: "None (Correctly Rejected)"</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>SEC-JWT-006</strong></td>
+        <td>JWT Security</td>
+        <td>Forged JWT Signature Tampering Rejection</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>223ms</td>
+        <td>HTTP 401: Token invalid or expired.</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>SEC-ADM-007</strong></td>
+        <td>Authorization</td>
+        <td>Privileged Admin Endpoint Access Guard</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>2ms</td>
+        <td>HTTP 401: Protected endpoint properly guarded</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>SEC-INJ-008</strong></td>
+        <td>Injection Defense</td>
+        <td>SQL Injection String Fuzzing on Login</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>3ms</td>
+        <td>HTTP 400: Handled cleanly without syntax exception</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>SEC-XSS-009</strong></td>
+        <td>XSS Defense</td>
+        <td>Cross-Site Scripting (XSS) Query Sanitization</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1332ms</td>
+        <td>HTTP 200: Sanitized input processed safely</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>SEC-ENV-010</strong></td>
+        <td>Secret Hygiene</td>
+        <td>Repository .gitignore Secret Protection</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>5ms</td>
+        <td>Ignore rules verified: ignoresEnv=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>SEC-ENV-011</strong></td>
+        <td>Secret Hygiene</td>
+        <td>.env.example Sanitization Check</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>5ms</td>
+        <td>Clean template verified: hasRealSecrets=false</td>
+      </tr>
+    
+    </tbody>
+  </table>
+</body>
+</html>

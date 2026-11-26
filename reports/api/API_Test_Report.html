@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FoodieBite QA Report — REST API Integration Suite</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 24px; background: #f8fafc; color: #1e293b; }
+    h1 { color: #1e3a8a; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+    .cards { display: flex; gap: 16px; margin-bottom: 24px; }
+    .card { background: white; padding: 16px 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); flex: 1; border-top: 4px solid #3b82f6; }
+    .card.pass { border-top-color: #10b981; }
+    .card.fail { border-top-color: #ef4444; }
+    .card h3 { margin: 0 0 4px; font-size: 13px; color: #64748b; text-transform: uppercase; }
+    .card .val { font-size: 28px; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th { background: #1e3a8a; color: white; padding: 12px; text-align: left; font-size: 13px; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+    tr:hover { background: #f8fafc; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .badge.pass { background: #dcfce7; color: #15803d; }
+    .badge.fail { background: #fee2e2; color: #b91c1c; }
+    .badge.blocked { background: #ffedd5; color: #c2410c; }
+    .badge.skipped { background: #f1f5f9; color: #64748b; }
+  </style>
+</head>
+<body>
+  <h1>FoodieBite QA Report — REST API Integration Suite</h1>
+  <div class="cards">
+    <div class="card"><div class="val">18</div><h3>Total Tests</h3></div>
+    <div class="card pass"><div class="val" style="color: #15803d">18</div><h3>Passed</h3></div>
+    <div class="card fail"><div class="val" style="color: #b91c1c">0</div><h3>Failed</h3></div>
+    <div class="card"><div class="val">100.0%</div><h3>Pass Rate</h3></div>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Test ID</th><th>Module</th><th>Test Name</th><th>Status</th><th>Duration</th><th>Actual Output</th></tr>
+    </thead>
+    <tbody>
+      
+      <tr class="pass">
+        <td><strong>API-HLTH-001</strong></td>
+        <td>Infrastructure</td>
+        <td>GET /health Infrastructure Probe</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>17ms</td>
+        <td>HTTP 200: {"success":true,"status":"pass","message":"FoodieBite API is...</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-RDY-002</strong></td>
+        <td>Infrastructure</td>
+        <td>GET /ready Readiness Probe</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>3ms</td>
+        <td>HTTP 200: ready=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-AI-003</strong></td>
+        <td>AI Diagnostics</td>
+        <td>GET /api/debug/ai Engine Status</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>2ms</td>
+        <td>HTTP 200: provider=local_deterministic, configured=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-AUTH-004</strong></td>
+        <td>Authentication</td>
+        <td>POST /api/auth/register New User</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>287ms</td>
+        <td>HTTP 201: tokenPresent=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-AUTH-005</strong></td>
+        <td>Authentication</td>
+        <td>POST /api/auth/register Duplicate Email Rejection</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>10ms</td>
+        <td>HTTP 400: message="Email already registered"</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-AUTH-006</strong></td>
+        <td>Authentication</td>
+        <td>POST /api/auth/login Valid Credentials</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>9ms</td>
+        <td>HTTP 200: tokenReceived=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-AUTH-007</strong></td>
+        <td>Authentication</td>
+        <td>POST /api/auth/login Invalid Credentials Rejection</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>4ms</td>
+        <td>HTTP 401: Invalid credentials</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-USR-008</strong></td>
+        <td>User Profile</td>
+        <td>GET /api/user/profile Authenticated Fetch</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1409ms</td>
+        <td>HTTP 200: success=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-FOOD-009</strong></td>
+        <td>Food Recommendations</td>
+        <td>GET /api/food/recommendations Live Workload</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>4368ms</td>
+        <td>HTTP 200: success=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-FOOD-010</strong></td>
+        <td>Food Search</td>
+        <td>GET /api/food/search Query Filtering</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1933ms</td>
+        <td>HTTP 200: matches=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-FOOD-011</strong></td>
+        <td>Food Search</td>
+        <td>GET /api/food/search Empty Query Resilience</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>543ms</td>
+        <td>HTTP 400: handled=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-AI-012</strong></td>
+        <td>AI Nutrition Coach</td>
+        <td>POST /api/coach Clinical Inquiry</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>7556ms</td>
+        <td>HTTP 200: success=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-MED-013</strong></td>
+        <td>Medical Intelligence</td>
+        <td>GET /api/medical/health-profile User Health Profile</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>485ms</td>
+        <td>HTTP 200: success=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-ADM-014</strong></td>
+        <td>Admin Security</td>
+        <td>GET /api/admin/users Unauthorized Rejection</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1ms</td>
+        <td>HTTP 401: Access Denied as expected</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-ADM-015</strong></td>
+        <td>Admin Security</td>
+        <td>GET /api/admin/users Authorized Fetch</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1000ms</td>
+        <td>HTTP 200: records=10</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-ADM-016</strong></td>
+        <td>Admin Reports</td>
+        <td>GET /api/admin/reports Global Audit</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>801ms</td>
+        <td>HTTP 200: reportsChecked=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-EML-017</strong></td>
+        <td>Email System</td>
+        <td>GET /api/email/status Service Check</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1173ms</td>
+        <td>HTTP 200: success=true</td>
+      </tr>
+    
+
+      <tr class="pass">
+        <td><strong>API-ERR-018</strong></td>
+        <td>Error Handling</td>
+        <td>GET /api/non-existent-route 404 Not Found</td>
+        <td><span class="badge pass">PASS</span></td>
+        <td>1ms</td>
+        <td>HTTP 404: Handled properly</td>
+      </tr>
+    
+    </tbody>
+  </table>
+</body>
+</html>
