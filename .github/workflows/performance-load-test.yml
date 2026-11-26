@@ -1,0 +1,143 @@
+name: FoodieBite Performance & Baseline Load Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      virtual_users:
+        description: 'Number of concurrent virtual users (VUs)'
+        required: false
+        type: number
+        default: 100
+      duration_seconds:
+        description: 'Test duration in seconds (e.g. 60 for 1 minute)'
+        required: false
+        type: number
+        default: 60
+      target_endpoint:
+        description: 'Target API endpoint path (e.g. /health or /ready)'
+        required: false
+        type: string
+        default: '/health'
+      max_error_rate:
+        description: 'Maximum allowable error rate percentage threshold'
+        required: false
+        type: number
+        default: 1.0
+      max_avg_latency_ms:
+        description: 'Maximum allowable average latency in milliseconds'
+        required: false
+        type: number
+        default: 500
+      max_p95_latency_ms:
+        description: 'Maximum allowable P95 latency in milliseconds'
+        required: false
+        type: number
+        default: 1000
+
+  schedule:
+    - cron: '0 4 * * 0' # Weekly performance baseline check on Sundays at 04:00 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline-load-test:
+    name: ⚡ 100 VUs / 1-Min Baseline Load Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      NODE_ENV: test
+      PORT: 5000
+      JWT_SECRET: "ci-performance-jwt-secret-minimum-32-chars!!"
+      DAILY_RECOMMENDATION_ENABLED: 'false'
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: 📦 Install Project Dependencies
+        run: |
+          npm install --no-audit --include=dev
+          cd backend && npm install --no-audit
+
+      - name: 🚀 Start FoodieBite Backend Service
+        run: |
+          echo "Starting backend server in background on port 5000..."
+          cd backend
+          nohup node src/server.js > ../backend-load-test.log 2>&1 &
+          echo $! > ../backend.pid
+          cd ..
+          
+          echo "Waiting for backend server health endpoint to be ready..."
+          for i in {1..20}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5000/health || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ FoodieBite backend is online and responding HTTP 200!"
+              break
+            fi
+            echo "Waiting for server to initialize ($i/20)..."
+            sleep 1
+          done
+
+      - name: ⚡ Execute Automated Baseline Load Test
+        id: run_load_test
+        run: |
+          VUS="${{ github.event.inputs.virtual_users || 100 }}"
+          DUR="${{ github.event.inputs.duration_seconds || 60 }}"
+          EP="${{ github.event.inputs.target_endpoint || '/health' }}"
+          MAX_ERR="${{ github.event.inputs.max_error_rate || 1.0 }}"
+          MAX_AVG="${{ github.event.inputs.max_avg_latency_ms || 500 }}"
+          MAX_P95="${{ github.event.inputs.max_p95_latency_ms || 1000 }}"
+
+          echo "Target URL: http://127.0.0.1:5000$EP"
+          echo "Virtual Users: $VUS | Duration: ${DUR}s"
+          
+          node scripts/runBaselineLoadTest.js \
+            --url="http://127.0.0.1:5000$EP" \
+            --concurrency="$VUS" \
+            --duration="$DUR" \
+            --max-error-rate="$MAX_ERR" \
+            --max-avg-latency="$MAX_AVG" \
+            --max-p95-latency="$MAX_P95"
+
+      - name: 📋 Publish Load Test Results to GitHub Actions Summary
+        if: always()
+        run: |
+          if [ -f "reports/baseline-load-test-report.md" ]; then
+            cat "reports/baseline-load-test-report.md" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⚠️ Baseline Load Test report was not generated." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 📦 Upload Performance Reports & Artifacts (30 Days Retention)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: foodiebite-baseline-load-test-reports
+          path: |
+            reports/FoodieBite_Baseline_Load_Test_Report.xlsx
+            reports/baseline-load-test-report.md
+            reports/baseline-load-test-results.json
+            backend-load-test.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 🛑 Teardown Backend Server Process
+        if: always()
+        run: |
+          if [ -f "backend.pid" ]; then
+            PID=$(cat backend.pid)
+            kill -9 $PID 2>/dev/null || true
+            echo "Cleaned up backend process $PID"
+          fi

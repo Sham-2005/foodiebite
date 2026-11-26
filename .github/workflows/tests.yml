@@ -13,10 +13,22 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   run-all-4-tests-and-export-excel:
     name: Run All 4 Tests & Generate Excel Reports
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      NODE_ENV: test
+      JWT_SECRET: "ci-test-jwt-secret-key-32-chars-min!!"
 
     steps:
       - name: 📥 Checkout Repository
@@ -26,29 +38,30 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
+          cache: 'npm'
 
       - name: 📦 Install Root & Backend Dependencies
         run: |
-          npm install --no-audit
+          npm install --no-audit --include=dev
           cd backend && npm install --no-audit
 
       # ── TEST 1: Dietary Safety, Allergen Exclusions & Unit Conversions ───────
-      - name: 🥗 Test 1: Dietary Safety & Unit Conversions Suite
+      - name: "🥗 Test 1: Dietary Safety & Unit Conversions Suite"
         run: |
           node scripts/runTestsAndExportExcel.js --suite=1
 
       # ── TEST 2: AI Recommendation & Clinical Medical Intelligence ───────────
-      - name: 🧠 Test 2: AI Recommendation & Medical Intelligence Suite
+      - name: "🧠 Test 2: AI Recommendation & Medical Intelligence Suite"
         run: |
           node scripts/runTestsAndExportExcel.js --suite=2
 
       # ── TEST 3: Email Campaigns, Brevo Integration & Admin Management ───────
-      - name: 📧 Test 3: Email Campaigns & Scheduler Engine Suite
+      - name: "📧 Test 3: Email Campaigns & Scheduler Engine Suite"
         run: |
           node scripts/runTestsAndExportExcel.js --suite=3
 
       # ── TEST 4: Frontend Nutrition OCR Scanner & Label Parsing ─────────────
-      - name: 🔍 Test 4: Frontend Nutrition OCR Scanner Suite
+      - name: "🔍 Test 4: Frontend Nutrition OCR Scanner Suite"
         run: |
           node scripts/runTestsAndExportExcel.js --suite=4
 

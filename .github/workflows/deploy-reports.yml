@@ -12,10 +12,15 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: github-pages-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy-pages:
     name: Publish Reports to GitHub Pages
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
