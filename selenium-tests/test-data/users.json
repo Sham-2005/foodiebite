@@ -1,0 +1,48 @@
+[
+  {
+    "id": "usr-qa-001",
+    "name": "Alice Quality",
+    "email": "alice.qa@foodiebite.test",
+    "password": "StrongPassword123!",
+    "role": "user",
+    "dietType": "Vegetarian",
+    "allergies": [
+      "Peanuts"
+    ],
+    "healthGoals": [
+      "Weight Loss",
+      "Heart Health"
+    ],
+    "spiceLevel": "Medium"
+  },
+  {
+    "id": "usr-qa-002",
+    "name": "Bob Vegan",
+    "email": "bob.vegan@foodiebite.test",
+    "password": "StrongPassword123!",
+    "role": "user",
+    "dietType": "Vegan",
+    "allergies": [
+      "Dairy",
+      "Eggs"
+    ],
+    "healthGoals": [
+      "Muscle Gain",
+      "High Fiber"
+    ],
+    "spiceLevel": "Mild"
+  },
+  {
+    "id": "usr-qa-003",
+    "name": "Charlie Admin",
+    "email": "admin.qa@foodiebite.test",
+    "password": "AdminPassword456!",
+    "role": "admin",
+    "dietType": "Non-Vegetarian",
+    "allergies": [],
+    "healthGoals": [
+      "Healthy Eating"
+    ],
+    "spiceLevel": "Hot"
+  }
+]

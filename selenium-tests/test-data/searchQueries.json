@@ -1,0 +1,22 @@
+[
+  {
+    "query": "Salad",
+    "expectedResultsCount": 5,
+    "category": "Food Name"
+  },
+  {
+    "query": "Protein",
+    "expectedResultsCount": 8,
+    "category": "Macro Search"
+  },
+  {
+    "query": "Vegan",
+    "expectedResultsCount": 10,
+    "category": "Diet Filter"
+  },
+  {
+    "query": "NonExistentDishXYZ",
+    "expectedResultsCount": 0,
+    "category": "Zero Results"
+  }
+]

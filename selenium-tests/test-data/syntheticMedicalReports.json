@@ -1,0 +1,29 @@
+[
+  {
+    "reportId": "med-rep-synthetic-01",
+    "reportName": "Metabolic & Lipid Panel (Synthetic QA Sample)",
+    "patientName": "Alice Quality",
+    "patientAge": 32,
+    "ocrText": "Fasting Blood Sugar: 128 mg/dL (Normal: 70-99). Total Cholesterol: 215 mg/dL (Desirable: <200). HbA1c: 6.2% (Normal: 4.0-5.6).",
+    "biomarkers": {
+      "fastingGlucose": {
+        "value": 128,
+        "unit": "mg/dL",
+        "status": "high",
+        "range": "70-99"
+      },
+      "totalCholesterol": {
+        "value": 215,
+        "unit": "mg/dL",
+        "status": "high",
+        "range": "<200"
+      },
+      "hba1c": {
+        "value": 6.2,
+        "unit": "%",
+        "status": "elevated",
+        "range": "4.0-5.6"
+      }
+    }
+  }
+]

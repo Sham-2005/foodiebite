@@ -257,13 +257,19 @@ function normalizeDietType(raw) {
  * @property {string|null}   maxCaloriesOverride       - user-set max calories preference
  * @property {string|null}   minProteinOverride        - user-set min protein preference
  */
-function buildUserFoodProfile(userData) {
-  if (!userData || typeof userData !== 'object') userData = {};
+function buildUserFoodProfile(arg1, arg2) {
+  let userId = null;
+  let userData = {};
+
+  if (typeof arg1 === 'string') {
+    userId = arg1;
+    userData = (arg2 && typeof arg2 === 'object') ? { ...arg2, id: userId, userId } : { id: userId, userId };
+  } else if (arg1 && typeof arg1 === 'object') {
+    userData = { ...arg1 };
+    userId = userData.id || userData.uid || userData.userId || null;
+  }
 
   const prefs = userData.preferences || {};
-
-  // ── Demographics ─────────────────────────────────────────────
-  const userId   = userData.id   || userData.uid  || null;
   const name     = userData.name || userData.displayName || null;
 
   const age    = userData.age    ? Number(userData.age)    : null;
@@ -307,6 +313,39 @@ function buildUserFoodProfile(userData) {
   const rawFasting = prefs.fasting || userData.fasting || null;
   const fasting    = normalizeFastingConfig(rawFasting);
 
+  // ── Health Check-in Wellness Insights Integration ─────────────
+  let checkin = userData.healthCheckinInsights || userData.checkinInsights || userData.latestCheckin || null;
+  if (!checkin && userId) {
+    try {
+      const healthCheckinStore = require('./healthCheckinStore');
+      const latestAnalysis = healthCheckinStore.getLatestAiAnalysisSync ? healthCheckinStore.getLatestAiAnalysisSync(userId) : null;
+      if (latestAnalysis) {
+        checkin = {
+          wellnessScore: latestAnalysis.overall_wellness_score !== undefined ? latestAnalysis.overall_wellness_score : (latestAnalysis.overallWellnessScore || 75),
+          wellnessCategory: latestAnalysis.wellness_category || latestAnalysis.wellnessCategory || 'Good',
+          focusNutrients: latestAnalysis.dietary_recommendations?.focus_nutrients || ['Complex Carbohydrates', 'Soluble Fiber'],
+          recommendedFoodCategories: latestAnalysis.recommended_food_categories || latestAnalysis.recommendedFoodCategories || ['Hydration-Rich Salads', 'Probiotic & Soothing Foods'],
+          trendAssessment: latestAnalysis.trend_assessment || latestAnalysis.trendAssessment || 'Stable',
+          summary: latestAnalysis.wellness_summary || latestAnalysis.executive_summary || ''
+        };
+      }
+    } catch (_) {}
+  }
+
+  if (checkin && typeof checkin === 'object') {
+    const categories = Array.isArray(checkin.recommendedFoodCategories)
+      ? checkin.recommendedFoodCategories
+      : (Array.isArray(checkin.recommended_food_categories) ? checkin.recommended_food_categories : []);
+
+    categories.forEach(cat => {
+      if (!foodsToPrefer.includes(cat)) foodsToPrefer.push(cat);
+    });
+
+    if (checkin.trendAssessment || checkin.trend_assessment) {
+      wellnessSummary.push(`Health Check-in Trend: ${checkin.trendAssessment || checkin.trend_assessment}`);
+    }
+  }
+
   return {
     userId,
     name,
@@ -332,6 +371,7 @@ function buildUserFoodProfile(userData) {
     wellnessSummary,
     medicalProfile,
     healthProfile,
+    healthCheckinInsights: checkin,
     maxCaloriesOverride,
     minProteinOverride,
   };

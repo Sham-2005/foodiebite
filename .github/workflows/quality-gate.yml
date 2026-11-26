@@ -1,0 +1,82 @@
+name: FoodieBite Quality Gate & Comprehensive Audit
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: 🛡️ FoodieBite Quality Gate & Master Dashboard Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      NODE_ENV: test
+      JWT_SECRET: "ci-test-jwt-secret-key-32-chars-min!!"
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: 🐍 Setup Python for Auditing
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install Dependencies
+        run: |
+          npm install --no-audit --include=dev
+          cd backend && npm install --no-audit
+          pip install pyyaml openpyxl
+
+      - name: 🔍 Validate All Workflow YAML Files
+        run: |
+          python scripts/validateYaml.py
+
+      - name: 🧪 Execute Core 4-Test Suite
+        run: |
+          node scripts/runTestsAndExportExcel.js --all
+
+      - name: ⚡ Execute Baseline Load Test
+        run: |
+          cd backend
+          nohup node src/server.js > ../backend.log 2>&1 &
+          cd ..
+          for i in {1..20}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5000/health || true)
+            if [ "$STATUS" = "200" ]; then break; fi
+            sleep 1
+          done
+          node scripts/runBaselineLoadTest.js --concurrency=100 --duration=10 --multi
+
+      - name: 📊 Compile Consolidated Master QA Dashboard
+        if: always()
+        run: |
+          node scripts/generateAllEnterpriseQAReports.js
+
+      - name: 📤 Upload Consolidated Master QA Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-qa-dashboard-reports
+          path: |
+            reports/master/
+            reports/performance/
+            reports/QA_REPOSITORY_AUDIT.md
+          retention-days: 30

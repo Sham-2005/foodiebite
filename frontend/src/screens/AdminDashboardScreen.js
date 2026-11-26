@@ -75,6 +75,7 @@ import { useApp } from '../context/AppContext';
 const AdminIntelligenceSection = React.lazy(() => import('../components/AdminIntelligenceSection'));
 const AdminEmailCampaignSection = React.lazy(() => import('../components/admin/AdminEmailCampaignSection'));
 const AdminFeedbackSection = React.lazy(() => import('../components/admin/AdminFeedbackSection'));
+const AdminHealthInsightsSection = React.lazy(() => import('../components/admin/AdminHealthInsightsSection'));
 
 import {
   apiAdminLogin,
@@ -539,7 +540,7 @@ export default function AdminDashboardScreen() {
     if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
       try {
         const p = new URLSearchParams(window.location.search).get('tab');
-        if (p && ['overview', 'users', 'campaigns', 'foods', 'analytics', 'feedback', 'settings'].includes(p)) {
+        if (p && ['overview', 'users', 'campaigns', 'foods', 'analytics', 'feedback', 'settings', 'health-insights'].includes(p)) {
           return p;
         }
       } catch (_) { }
@@ -3384,6 +3385,18 @@ export default function AdminDashboardScreen() {
               </View>
             )}
 
+            {/* HEALTH INSIGHTS TAB */}
+            {activeTab === 'health-insights' && (
+              <React.Suspense fallback={
+                <View style={styles.loadingBox}>
+                  <ActivityIndicator size="small" color={C.orange} />
+                  <Text style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>Loading Health Insights Module...</Text>
+                </View>
+              }>
+                <AdminHealthInsightsSection />
+              </React.Suspense>
+            )}
+
           </View>
         )}
       </ScrollView>
@@ -3516,6 +3529,7 @@ function AdminFooter({ activeTab, onTabSelect }) {
   const navItems = [
     { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'users', label: 'Users', icon: Users },
+    { id: 'health-insights', label: isMobile ? 'Insights' : 'Health Insights', icon: Activity },
     { id: 'campaigns', label: 'Campaigns', icon: Mail },
     { id: 'foods', label: isMobile ? 'Foods' : 'Food Database', icon: Database },
     { id: 'analytics', label: 'Analytics', icon: BarChart2 },

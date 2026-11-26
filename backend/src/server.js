@@ -22,6 +22,7 @@ const nearbyRoutes   = require('./routes/nearbyRoutes');
 const merchantRoutes = require('./routes/merchantRoutes');
 const restaurantRoutes = require('./routes/restaurantRoutes');
 const emailRoutes      = require('./routes/emailRoutes');
+const healthCheckinRoutes = require('./routes/healthCheckinRoutes');
 
 // Validate production environment variables at startup
 validateEnv();
@@ -218,6 +219,7 @@ app.use('/api/coach', coachRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/checkin', healthCheckinRoutes);
 app.use('/api/merchant', merchantRoutes);
 app.use('/api/restaurants', restaurantRoutes);
 app.use('/api/nearby', nearbyRoutes);

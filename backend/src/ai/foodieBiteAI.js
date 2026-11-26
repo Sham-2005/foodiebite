@@ -13,6 +13,7 @@ const { generateDailyMealPlan } = require('./mealPlanEngine');
 const { getFoodSubstitutions } = require('./substitutionEngine');
 const { buildCompactState, resolveContextReference } = require('./conversationEngine');
 const { evaluateSafety } = require('./safetyEngine');
+const { isClinicalQuery, handleClinicalConsultation } = require('./clinicalConsultationEngine');
 const { buildClarificationChoice, formatFoodInformation } = require('./responseFormatter');
 const { getRelevantMedicalContext } = require('./medicalReportContext');
 const { performMultiStepReasoning } = require('./reasoningEngine');
@@ -73,6 +74,19 @@ async function processMessage({ message, userContext = {}, conversationHistory =
         options: [],
         confidence: 1.0,
         timing: { nluMs: 0, reasoningMs: 1, formattingMs: 0, totalMs: Date.now() - startTime }
+      };
+    }
+
+    // 1b. Clinical Dietary Consultation & Biomarker Guidance
+    if (isClinicalQuery(rawMessage, userContext)) {
+      const clinicalResult = handleClinicalConsultation({
+        message: rawMessage,
+        userContext,
+        conversationHistory
+      });
+      return {
+        ...clinicalResult,
+        timing: { ...clinicalResult.timing, totalMs: Date.now() - startTime }
       };
     }
 

@@ -16,6 +16,30 @@ const {
   buildDeterministicFallback
 } = require('./groundedRecommendationService');
 
+// Interactive timeout SLA for primary AI inference (configurable via env)
+const COACH_PRIMARY_TIMEOUT_MS = parseInt(process.env.COACH_PRIMARY_TIMEOUT_MS, 10) || 4000;
+
+/**
+ * Detects whether an LLM output is a refusal or non-informative response.
+ */
+function isRefusalOrEmpty(text) {
+  if (!text || typeof text !== 'string') return true;
+  const trimmed = text.trim();
+  if (trimmed.length < 15) return true;
+  const lower = trimmed.toLowerCase();
+  const refusalPhrases = [
+    "i'm sorry, but i can't assist",
+    "i cannot assist with that",
+    "i can't assist with that",
+    "as an ai",
+    "i am not able to assist",
+    "i cannot help with that",
+    "i am unable to provide",
+    "not programmed to assist"
+  ];
+  return refusalPhrases.some(p => lower.includes(p));
+}
+
 const FOODIEBITE_SYSTEM_PROMPT = `
 You are FoodieBite AI — an intelligent, context-aware food and nutrition assistant.
 `;
@@ -112,16 +136,42 @@ async function generateResponse({ message, userContext = {}, conversationHistory
           content: message
         });
 
-        // 4. Request completion from Ollama
-        const ollamaResult = await ollamaService.chat({
+        // 4. Request completion from Ollama with proactive SLA timeout race
+        const primaryTimeoutMs = Math.min(
+          parseInt(process.env.COACH_PRIMARY_TIMEOUT_MS, 10) || COACH_PRIMARY_TIMEOUT_MS,
+          ollamaService.timeoutMs || 4000
+        );
+
+        let timeoutHandle = null;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            const err = new Error(`Primary Ollama inference exceeded interactive timeout threshold (${primaryTimeoutMs}ms)`);
+            err.code = 'OLLAMA_TIMEOUT';
+            reject(err);
+          }, primaryTimeoutMs);
+          if (timeoutHandle && timeoutHandle.unref) timeoutHandle.unref();
+        });
+
+        const chatPromise = ollamaService.chat({
           messages: ollamaMessages,
           system: systemPrompt,
           options: {
             temperature: 0.35,
-            num_predict: 800
+            num_predict: 256
           },
-          timeout: ollamaService.timeoutMs || 30000
+          timeout: primaryTimeoutMs
         });
+        // Prevent unhandled promise rejection if timeoutPromise wins the race
+        chatPromise.catch(() => {});
+
+        const ollamaResult = await Promise.race([chatPromise, timeoutPromise]);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+
+        // Quality check: Guard against generic refusals or empty model output
+        if (isRefusalOrEmpty(ollamaResult.content)) {
+          const warnMsg = (ollamaResult.content || '').substring(0, 80).replace(/\n/g, ' ');
+          throw new Error(`Primary AI model returned refusal or non-informative response: "${warnMsg}"`);
+        }
 
         // 5. Validate output against grounded food candidates
         const validated = validateGroundedResponse(ollamaResult.content, candidates);
@@ -150,7 +200,7 @@ async function generateResponse({ message, userContext = {}, conversationHistory
         console.log(`ℹ️ [FoodieBiteAI] Ollama status is "${status.status}". Activating deterministic engine fallback...`);
       }
     } catch (ollamaErr) {
-      console.warn(`⚠️ [FoodieBiteAI] Ollama execution failed (${ollamaErr.message}). Activating deterministic engine fallback...`);
+      console.log(`ℹ️ [FoodieBiteAI] Primary inference unavailable or exceeded SLA (${ollamaErr.message}). Activating deterministic engine fallback...`);
     }
   }
 
@@ -164,15 +214,17 @@ async function generateResponse({ message, userContext = {}, conversationHistory
 
     return {
       success: true,
-      source: 'foodiebite_deterministic_engine',
-      provider: 'deterministic_engine',
-      model: 'foodiebite-rule-v2',
+      source: aiResult.source || 'foodiebite_deterministic_engine',
+      provider: aiResult.provider || 'deterministic_engine',
+      model: aiResult.model || 'foodiebite-rule-v2',
       reply: aiResult.reply,
-      type: aiResult.type || 'text',
+      type: aiResult.type || (aiResult.options && aiResult.options.length > 0 ? 'choice' : 'text'),
       options: Array.isArray(aiResult.options) ? aiResult.options : [],
-      confidence: typeof aiResult.confidence === 'number' ? aiResult.confidence : 0.90,
-      timing: aiResult.timing || { totalMs: Date.now() - t0 },
+      recommendations: Array.isArray(aiResult.recommendations) ? aiResult.recommendations : [],
+      confidence: typeof aiResult.confidence === 'number' ? aiResult.confidence : 0.92,
+      timing: aiResult.timing || { totalMs: Date.now() - t0, fallbackMs: Date.now() - t0 },
       metadata: aiResult.metadata || {},
+      clinicalDetails: aiResult.clinicalDetails,
       nearbyIntent: aiResult.nearbyIntent
     };
   } catch (err) {
@@ -190,7 +242,8 @@ async function generateResponse({ message, userContext = {}, conversationHistory
       model: 'deterministic-static',
       reply: safeFallback.reply,
       type: 'choice',
-      options: safeFallback.options,
+      options: Array.isArray(safeFallback.options) ? safeFallback.options : [],
+      recommendations: Array.isArray(safeFallback.recommendations) ? safeFallback.recommendations : [],
       confidence: 0.85,
       timing: { totalMs: Date.now() - t0 },
       metadata: {}
@@ -208,7 +261,8 @@ async function getAIStatus() {
     ollama: ollamaStatus,
     activeProvider: (ollamaStatus.connected && ollamaStatus.modelAvailable) ? 'ollama' : 'foodiebite_deterministic_engine',
     model: ollamaStatus.selectedModel || 'qwen2.5:0.5b',
-    deterministicEngineReady: true
+    deterministicEngineReady: true,
+    coachPrimaryTimeoutMs: COACH_PRIMARY_TIMEOUT_MS
   };
 }
 

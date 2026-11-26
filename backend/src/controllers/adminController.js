@@ -1722,3 +1722,106 @@ exports.getFoodDatabaseItemById = async (req, res, next) => {
     else res.status(500).json({ success: false, message: err.message });
   }
 };
+
+// ═══════════════════════════════════════════════════════════════
+//  ADMIN HEALTH INSIGHTS & WELLNESS CHECK-IN MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+
+const healthCheckinService = require('../services/healthCheckinService');
+
+/**
+ * GET /api/admin/health-insights/stats
+ * Aggregate metrics across all submitted health check-ins
+ */
+exports.getHealthInsightsStats = async (req, res, next) => {
+  try {
+    const stats = await healthCheckinService.getAdminStats(req.token);
+    res.status(200).json({
+      success: true,
+      stats
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * GET /api/admin/health-insights/submissions
+ * Searchable, filterable list of check-in submissions
+ */
+exports.getHealthInsightsSubmissions = async (req, res, next) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 50;
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const status = req.query.status || 'all';
+    const userId = req.query.userId || null;
+    const trend = req.query.trend || null;
+
+    const submissions = await healthCheckinService.getAdminSubmissions({ limit, offset, status, userId, trend }, req.token);
+    res.status(200).json({
+      success: true,
+      count: submissions.length,
+      submissions
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * GET /api/admin/health-insights/users/:id/profile
+ * Comprehensive user check-in history, latest survey, and trend timeline
+ */
+exports.getAdminUserHealthCheckinProfile = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const profile = await healthCheckinService.getAdminUserHealthProfile(id, req.token);
+    res.status(200).json({
+      success: true,
+      profile
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * GET /api/admin/health-insights/checkin/:id
+ * Detailed survey breakdown: questions, user responses, follow-ups, and AI analysis
+ */
+exports.getAdminCheckinDetails = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const details = await healthCheckinService.getCheckinDetails(id, null, true, req.token);
+    res.status(200).json({
+      success: true,
+      ...details
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /api/admin/health-insights/checkin/:id/reanalyze
+ * Re-triggers Ollama AI wellness analysis for a completed check-in
+ */
+exports.reanalyzeCheckin = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const details = await healthCheckinService.getCheckinDetails(id, null, true, req.token);
+    if (!details || !details.checkin) {
+      return res.status(404).json({ success: false, message: 'Check-in not found.' });
+    }
+
+    const checkin = details.checkin;
+    const result = await healthCheckinService.completeCheckin(id, checkin.user_id, {}, req.token);
+    res.status(200).json({
+      success: true,
+      message: 'Check-in re-analyzed successfully.',
+      ...result
+    });
+  } catch (err) {
+    next(err);
+  }
+};

@@ -1,0 +1,95 @@
+name: Selenium Web E2E Test Suite & Excel Reports
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      headless:
+        description: 'Run tests in headless browser mode'
+        type: boolean
+        default: true
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selenium-e2e:
+    name: 🌐 Chrome Web E2E Testing & Excel Reporting
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      NODE_ENV: test
+      SELENIUM_HEADLESS: 'true'
+      PORT: 5000
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: 📦 Install Root & Frontend Dependencies
+        run: |
+          npm install --no-audit --include=dev
+          cd frontend && npm install --no-audit --include=dev
+          cd ../selenium-tests && npm install --no-audit
+
+      - name: 🏗️ Build Production Web Application
+        run: |
+          cd frontend
+          npm run build
+          ls -la build/
+          test -f build/index.html || exit 1
+          test -d build/static || exit 1
+
+      - name: 🚀 Start FoodieBite Services
+        run: |
+          cd backend
+          nohup node src/server.js > ../backend.log 2>&1 &
+          cd ../frontend
+          npx serve -s build -l 3000 > ../frontend.log 2>&1 &
+          cd ..
+          
+          echo "Waiting for services..."
+          for i in {1..20}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5000/health || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Backend online"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: 🧪 Execute Selenium Web E2E Automation
+        run: |
+          cd selenium-tests
+          node runner.js --headless
+
+      - name: 📊 Generate Multi-Format QA Reports
+        if: always()
+        run: |
+          node scripts/generateAllEnterpriseQAReports.js
+
+      - name: 📤 Upload Selenium Reports & Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selenium-web-e2e-reports
+          path: |
+            selenium-tests/reports/
+            selenium-tests/screenshots/
+            selenium-tests/logs/
+          retention-days: 30

@@ -62,6 +62,17 @@ exports.getProfile = async (req, res, next) => {
       .maybeSingle();
 
     if (error) {
+      try {
+        const userStore = require('../services/userStore');
+        const localUser = userStore.getUserById(userId) || (req.user?.email ? userStore.findByEmail(req.user.email) : null);
+        if (localUser) {
+          return res.status(200).json({
+            success: true,
+            profile: localUser,
+            user: localUser
+          });
+        }
+      } catch (_) {}
       return res.status(500).json({ success: false, message: error.message });
     }
 
@@ -72,6 +83,18 @@ exports.getProfile = async (req, res, next) => {
         user: data
       });
     }
+
+    try {
+      const userStore = require('../services/userStore');
+      const localUser = userStore.getUserById(userId) || (req.user?.email ? userStore.findByEmail(req.user.email) : null);
+      if (localUser) {
+        return res.status(200).json({
+          success: true,
+          profile: localUser,
+          user: localUser
+        });
+      }
+    } catch (_) {}
 
     return res.status(404).json({ success: false, message: 'User profile not found in Supabase.' });
   } catch (err) {
@@ -136,6 +159,19 @@ exports.updateProfile = async (req, res, next) => {
       .maybeSingle();
 
     if (error) {
+      try {
+        const userStore = require('../services/userStore');
+        const localUser = userStore.getUserById(userId) || (req.user?.email ? userStore.findByEmail(req.user.email) : null);
+        if (localUser) {
+          const merged = userStore.upsertUser({ ...localUser, ...updates });
+          return res.status(200).json({
+            success: true,
+            message: 'Profile updated successfully.',
+            profile: merged,
+            user: merged
+          });
+        }
+      } catch (_) {}
       return res.status(400).json({ success: false, message: `Failed to update profile in Supabase: ${error.message}` });
     }
 

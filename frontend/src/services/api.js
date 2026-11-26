@@ -3879,5 +3879,239 @@ export async function apiAdminUpdateFeedbackStatus(id, { status, internalNotes, 
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  HEALTH CHECK-IN & AI WELLNESS INSIGHTS API SERVICES
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Starts a new check-in or resumes an active draft
+ */
+export async function apiStartCheckin() {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/checkin/start`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`
+    }
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to start health check-in');
+}
+
+/**
+ * Retrieves the currently active draft for the authenticated user
+ */
+export async function apiGetCurrentCheckinDraft() {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/checkin/current`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`
+    }
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  return { success: true, hasDraft: false, draft: null };
+}
+
+/**
+ * Saves partial or complete user answers to questions
+ */
+export async function apiSaveCheckinAnswers(checkinId, answers) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/checkin/answers`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`
+    },
+    body: JSON.stringify({ checkinId, answers })
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to save check-in answers');
+}
+
+/**
+ * Analyzes answers and requests dynamic follow-up questions from Ollama
+ */
+export async function apiGetCheckinFollowUps(checkinId, answers, userContext = {}) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/checkin/follow-ups`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`
+    },
+    body: JSON.stringify({ checkinId, answers, userContext })
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to generate dynamic follow-up questions');
+}
+
+/**
+ * Submits and finalizes the health check-in, generating AI wellness analysis
+ */
+export async function apiCompleteCheckin(checkinId, userProfile = {}) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/checkin/complete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`
+    },
+    body: JSON.stringify({ checkinId, userProfile })
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to complete health check-in');
+}
+
+/**
+ * Retrieves user check-in history with summaries
+ */
+export async function apiGetCheckinHistory(limit = 20, offset = 0) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/checkin/history?limit=${limit}&offset=${offset}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`
+    }
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  return { history: [], totalCount: 0 };
+}
+
+/**
+ * Retrieves full details of a single check-in (questions, answers, AI analysis)
+ */
+export async function apiGetCheckinDetails(id) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/checkin/${id}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`
+    }
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to load check-in details');
+}
+
+/**
+ * Retrieves personal wellness trend timeline metrics
+ */
+export async function apiGetPersonalWellnessTrends() {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/checkin/trends/personal`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`
+    }
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  return { trends: { timeline: [], completedCheckinsCount: 0 } };
+}
+
+/**
+ * Admin: Get aggregate statistics across all health check-ins
+ */
+export async function apiAdminGetHealthInsightsStats() {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/admin/health-insights/stats`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`,
+      'x-admin-key': 'foodiebite_ai_live_key_2026'
+    }
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  return { stats: { totalCheckins: 0, activeParticipants: 0, checkinsThisWeek: 0, pendingAnalysis: 0, analyzedCheckins: 0 } };
+}
+
+/**
+ * Admin: Search and filter check-in submissions
+ */
+export async function apiAdminGetHealthInsightsSubmissions(params = {}) {
+  const token = getToken();
+  const q = new URLSearchParams(params).toString();
+  const res = await fetch(`${API_BASE_URL}/admin/health-insights/submissions?${q}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`,
+      'x-admin-key': 'foodiebite_ai_live_key_2026'
+    }
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  return { submissions: [], count: 0 };
+}
+
+/**
+ * Admin: Get user health profile with check-in history & comparison
+ */
+export async function apiAdminGetUserHealthCheckinProfile(userId) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/admin/health-insights/users/${userId}/profile`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`,
+      'x-admin-key': 'foodiebite_ai_live_key_2026'
+    }
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to load user health profile');
+}
+
+/**
+ * Admin: Get single check-in full survey breakdown
+ */
+export async function apiAdminGetCheckinDetails(id) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/admin/health-insights/checkin/${id}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`,
+      'x-admin-key': 'foodiebite_ai_live_key_2026'
+    }
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to load check-in details');
+}
+
+/**
+ * Admin: Re-trigger AI wellness analysis on a check-in
+ */
+export async function apiAdminReanalyzeCheckin(id) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/admin/health-insights/checkin/${id}/reanalyze`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`,
+      'x-admin-key': 'foodiebite_ai_live_key_2026'
+    }
+  });
+  const data = await res.json();
+  if (res.ok && data.success) return data;
+  throw new Error(data.message || 'Failed to re-analyze check-in');
+}
+
 
 

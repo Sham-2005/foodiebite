@@ -91,6 +91,7 @@ const LazyChatScreen = withLazy(() => import('./screens/ChatScreen'));
 const LazyAnalyticsScreen = withLazy(() => import('./screens/AnalyticsScreen'));
 const LazyNutritionScannerScreen = withLazy(() => import('./screens/NutritionScannerScreen'));
 const LazyAuthCallbackScreen = withLazy(() => import('./screens/AuthCallbackScreen'));
+const LazyHealthCheckInScreen = withLazy(() => import('./screens/HealthCheckInScreen'));
 
 const Stack = createStackNavigator();
 
@@ -245,6 +246,7 @@ function AppContent() {
       <Stack.Screen name="Chat" component={LazyChatScreen} />
       <Stack.Screen name="Analytics" component={LazyAnalyticsScreen} />
       <Stack.Screen name="NutritionScanner" component={LazyNutritionScannerScreen} />
+      <Stack.Screen name="HealthCheckIn" component={LazyHealthCheckInScreen} />
     </Stack.Navigator>
   );
 }
@@ -268,6 +270,7 @@ const linking = {
       Profile: 'profile',
       Compare: 'compare',
       NutritionScanner: 'scanner',
+      HealthCheckIn: 'checkin',
       AuthCallback: 'auth/callback',
       AuthCallbackAlt: 'auth-callback',
       CompleteProfile: 'complete-profile',

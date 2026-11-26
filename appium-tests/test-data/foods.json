@@ -1,0 +1,62 @@
+[
+  {
+    "id": "f-101",
+    "name": "Mediterranean Quinoa Salad",
+    "category": "Salad",
+    "calories": 340,
+    "protein": 12,
+    "carbs": 42,
+    "fats": 14,
+    "isVeg": true,
+    "isVegan": true,
+    "spice": "Mild"
+  },
+  {
+    "id": "f-102",
+    "name": "Paneer Tikka Herb Skewers",
+    "category": "Dinner",
+    "calories": 420,
+    "protein": 22,
+    "carbs": 14,
+    "fats": 28,
+    "isVeg": true,
+    "isVegan": false,
+    "spice": "Medium"
+  },
+  {
+    "id": "f-103",
+    "name": "Steamed Edamame & Brown Rice",
+    "category": "Lunch",
+    "calories": 380,
+    "protein": 18,
+    "carbs": 54,
+    "fats": 8,
+    "isVeg": true,
+    "isVegan": true,
+    "spice": "Mild"
+  },
+  {
+    "id": "f-104",
+    "name": "Grilled Herb Chicken Breast",
+    "category": "Dinner",
+    "calories": 310,
+    "protein": 38,
+    "carbs": 4,
+    "fats": 12,
+    "isVeg": false,
+    "isVegan": false,
+    "spice": "Mild"
+  },
+  {
+    "id": "f-105",
+    "name": "Lentil Spinach Dahl",
+    "category": "Soup/Stew",
+    "calories": 290,
+    "protein": 16,
+    "carbs": 38,
+    "fats": 6,
+    "isVeg": true,
+    "isVegan": true,
+    "spice": "Medium"
+  }
+]

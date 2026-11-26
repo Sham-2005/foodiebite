@@ -137,6 +137,13 @@ router.get('/foods/stats', adminController.getFoodDatabaseStats);
 router.get('/foods/:id', adminController.getFoodDatabaseItemById);
 router.get('/foods', adminController.getAllFoodsDatabase);
 
+// Admin Health Insights & Check-in Management routes
+router.get('/health-insights/stats', adminController.getHealthInsightsStats);
+router.get('/health-insights/submissions', adminController.getHealthInsightsSubmissions);
+router.get('/health-insights/users/:id/profile', adminController.getAdminUserHealthCheckinProfile);
+router.get('/health-insights/checkin/:id', adminController.getAdminCheckinDetails);
+router.post('/health-insights/checkin/:id/reanalyze', adminController.reanalyzeCheckin);
+
 // Restaurant request review and approval endpoints (preserved for API compatibility)
 router.get('/restaurant-requests', adminController.getRestaurantRequests);
 router.get('/restaurant-requests/:id', adminController.getRestaurantRequestById);

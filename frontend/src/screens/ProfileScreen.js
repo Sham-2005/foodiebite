@@ -4,7 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { 
   User, Mail, Heart, FileText, Bell, Shield, LogOut, Trash2, 
   ChevronRight, CheckCircle2, AlertCircle, RefreshCw, Clock, Calendar, Check, X,
-  Info, MessageSquare
+  Info, MessageSquare, Activity
 } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import AppLayout from '../components/AppLayout';
@@ -417,6 +417,21 @@ export default function ProfileScreen() {
                 )}
               </View>
               <Text style={styles.menuItemSub}>Upload health profiles & doctor logs</Text>
+            </View>
+            <ChevronRight size={16} color={C.muted2} />
+          </TouchableOpacity>
+
+          {/* Row 4: Weekly Health Check-in */}
+          <TouchableOpacity 
+            onPress={() => navigation.navigate('HealthCheckIn')}
+            style={styles.menuItem}
+          >
+            <View style={styles.menuIconContainer}>
+              <Activity size={18} color="#22c55e" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.menuItemText}>Health Check-in & Insights</Text>
+              <Text style={styles.menuItemSub}>Weekly wellness survey, trends & AI guidance</Text>
             </View>
             <ChevronRight size={16} color={C.muted2} />
           </TouchableOpacity>

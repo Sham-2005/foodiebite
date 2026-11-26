@@ -1,0 +1,42 @@
+[
+  {
+    "type": "Vegetarian",
+    "forbiddenKeywords": [
+      "chicken",
+      "mutton",
+      "beef",
+      "pork",
+      "fish",
+      "seafood",
+      "bacon",
+      "egg"
+    ]
+  },
+  {
+    "type": "Vegan",
+    "forbiddenKeywords": [
+      "dairy",
+      "milk",
+      "cheese",
+      "paneer",
+      "butter",
+      "ghee",
+      "curd",
+      "meat",
+      "egg",
+      "honey"
+    ]
+  },
+  {
+    "type": "Keto / Low-Carb",
+    "maxNetCarbs": 15,
+    "preferredMacros": {
+      "fats": "high",
+      "protein": "moderate"
+    }
+  },
+  {
+    "type": "High-Protein",
+    "minProteinGrams": 25
+  }
+]

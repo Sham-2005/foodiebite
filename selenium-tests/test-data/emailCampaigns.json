@@ -1,0 +1,10 @@
+[
+  {
+    "campaignId": "camp-qa-01",
+    "campaignName": "Weekly Nutrition Guidance Campaign",
+    "subject": "🥗 Personalized Nutrient Picks for Alice",
+    "targetSegment": "Vegetarian",
+    "recipientCount": 24,
+    "status": "scheduled"
+  }
+]

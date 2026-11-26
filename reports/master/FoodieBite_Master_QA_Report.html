@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FoodieBite Consolidated Master QA Dashboard</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 24px; background: #f8fafc; color: #1e293b; }
+    h1 { color: #1e3a8a; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+    .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    .card { background: white; padding: 18px 24px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-top: 4px solid #3b82f6; }
+    .card.pass { border-top-color: #10b981; }
+    .card.fail { border-top-color: #ef4444; }
+    .card h3 { margin: 0 0 6px; font-size: 13px; color: #64748b; text-transform: uppercase; }
+    .card .val { font-size: 32px; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; }
+    th { background: #1e3a8a; color: white; padding: 12px 14px; text-align: left; font-size: 13px; }
+    td { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+    tr:hover { background: #f8fafc; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .badge.pass { background: #dcfce7; color: #15803d; }
+    .badge.fail { background: #fee2e2; color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <h1>FoodieBite Consolidated Master QA Dashboard</h1>
+  <div class="cards">
+    <div class="card"><div class="val">1210</div><h3>Grand Total Scenarios</h3></div>
+    <div class="card pass"><div class="val" style="color: #15803d">1210</div><h3>Total Passed</h3></div>
+    <div class="card fail"><div class="val" style="color: #b91c1c">0</div><h3>Total Failed</h3></div>
+    <div class="card pass"><div class="val" style="color: #15803d">100.0%</div><h3>Pass Rate</h3></div>
+  </div>
+  <h2>Testing Layers Overview</h2>
+  <table>
+    <thead>
+      <tr><th>Module / Layer</th><th>Total</th><th>Passed</th><th>Failed</th><th>Pass Rate</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Core Suite 1: Dietary Safety & Units</strong></td><td>59</td><td>59</td><td>0</td><td>100.0%</td><td><span class="badge pass">PASS</span></td></tr><tr><td><strong>Core Suite 2: AI Medical Intelligence</strong></td><td>84</td><td>84</td><td>0</td><td>100.0%</td><td><span class="badge pass">PASS</span></td></tr><tr><td><strong>Core Suite 3: Email & Scheduler Engine</strong></td><td>30</td><td>30</td><td>0</td><td>100.0%</td><td><span class="badge pass">PASS</span></td></tr><tr><td><strong>Core Suite 4: Frontend OCR Scanner</strong></td><td>11</td><td>11</td><td>0</td><td>100.0%</td><td><span class="badge pass">PASS</span></td></tr><tr><td><strong>Web Application Selenium E2E</strong></td><td>502</td><td>502</td><td>0</td><td>100.0%</td><td><span class="badge pass">PASS</span></td></tr><tr><td><strong>Android Mobile Appium E2E</strong></td><td>479</td><td>479</td><td>0</td><td>100.0%</td><td><span class="badge pass">PASS</span></td></tr><tr><td><strong>Backend REST API Integration</strong></td><td>18</td><td>18</td><td>0</td><td>100.0%</td><td><span class="badge pass">PASS</span></td></tr><tr><td><strong>Cross-Service Integration E2E</strong></td><td>12</td><td>12</td><td>0</td><td>100.0%</td><td><span class="badge pass">PASS</span></td></tr><tr><td><strong>DevSecOps & Security Audit</strong></td><td>11</td><td>11</td><td>0</td><td>100.0%</td><td><span class="badge pass">PASS</span></td></tr><tr><td><strong>Baseline Load & Throughput (100 VUs)</strong></td><td>4</td><td>4</td><td>0</td><td>100.0%</td><td><span class="badge pass">PASS</span></td></tr>
+    </tbody>
+  </table>
+</body>
+</html>

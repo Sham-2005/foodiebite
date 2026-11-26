@@ -4,9 +4,13 @@
 // ─────────────────────────────────────────────────────────────
 
 const { validationResult } = require('express-validator');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const userStore = require('../services/userStore');
 const brevoService = require('../services/brevoService');
 const { getFirestoreDb } = require('../config/firebase');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'foodiebite_super_secret_key_change_in_production_2024';
 
 exports.register = async (req, res, next) => {
   try {
@@ -26,11 +30,17 @@ exports.register = async (req, res, next) => {
     const uid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date().toISOString();
 
+    let hashedPassword = password;
+    try {
+      hashedPassword = await bcrypt.hash(password, 10);
+    } catch (_) {}
+
     const newUser = {
       id: uid,
       uid,
       name: name.trim(),
       email: cleanEmail,
+      password: hashedPassword,
       dietType: dietType || 'Vegetarian',
       role: cleanEmail === 'sham111205s@gmail.com' ? 'admin' : 'user',
       accountStatus: 'active',
@@ -88,11 +98,17 @@ exports.register = async (req, res, next) => {
       });
     }
 
+    const token = jwt.sign(
+      { uid, id: uid, email: cleanEmail, role: newUser.role },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
     res.status(201).json({
       success: true,
       message: 'Account registered successfully',
       user: savedUser,
-      token: `token_${uid}`
+      token
     });
   } catch (err) {
     next(err);
@@ -106,12 +122,25 @@ exports.login = async (req, res, next) => {
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { email } = req.body;
+    const { email, password } = req.body;
     const cleanEmail = email.trim().toLowerCase();
     const user = userStore.findByEmail(cleanEmail);
 
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    // Verify password if set on user
+    if (user.password && password) {
+      let isMatch = false;
+      try {
+        isMatch = await bcrypt.compare(password, user.password);
+      } catch (_) {
+        isMatch = (password === user.password);
+      }
+      if (!isMatch && user.password !== password) {
+        return res.status(401).json({ success: false, message: 'Invalid credentials' });
+      }
     }
 
     // Verify account is not disabled
@@ -128,11 +157,17 @@ exports.login = async (req, res, next) => {
       lastSignInTime: new Date().toISOString()
     });
 
+    const token = jwt.sign(
+      { id: user.id || user.uid, uid: user.id || user.uid, email: user.email, role: user.role || 'user' },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
     res.status(200).json({
       success: true,
       message: 'Logged in successfully',
       user: updated,
-      token: `token_${user.id || user.uid}`
+      token
     });
   } catch (err) {
     next(err);

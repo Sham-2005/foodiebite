@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, Modal, ActivityIndicator, Platform } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Bell, Search, SlidersHorizontal, RefreshCw, CloudRain, MapPin, Thermometer, X, Trash2, Check, Sparkles, AlertCircle, Scale, ArrowRight, Zap } from 'lucide-react-native';
+import { Bell, Search, SlidersHorizontal, RefreshCw, CloudRain, MapPin, Thermometer, X, Trash2, Check, Sparkles, AlertCircle, Scale, ArrowRight, Zap, Activity } from 'lucide-react-native';
 import { useApp } from '../context/AppContext';
 import AppLayout from '../components/AppLayout';
 import { FoodCardH, SectionHeader, SkeletonCard, ErrorState, C, MoodSelector } from '../components/UI';
@@ -262,6 +262,14 @@ export default function HomeScreen() {
 
         {/* Quick Links */}
         <View style={styles.quickLinks}>
+          <TouchableOpacity 
+            onPress={() => navigation.navigate('HealthCheckIn')} 
+            style={[styles.quickLinkButton, { backgroundColor: 'rgba(34, 197, 94, 0.12)', borderColor: '#22c55e' }]}
+            activeOpacity={0.8}
+          >
+            <Activity size={14} color="#22c55e" style={{ marginRight: 6 }} />
+            <Text style={[styles.quickLinkText, { color: '#4ade80' }]}>Health Check-in</Text>
+          </TouchableOpacity>
           <TouchableOpacity 
             onPress={() => navigation.navigate('Compare')} 
             style={[styles.quickLinkButton, styles.quickLinkButtonActive]}
