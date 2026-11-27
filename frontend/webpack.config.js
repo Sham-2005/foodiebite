@@ -227,7 +227,14 @@ module.exports = {
     hints: false,
   },
   resolve: {
+    modules: [
+      path.resolve(__dirname, 'node_modules'),
+      path.resolve(__dirname, '../node_modules'),
+      'node_modules'
+    ],
     alias: {
+      'react': path.resolve(__dirname, 'node_modules/react'),
+      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
       'react-native$': 'react-native-web',
       // Stub out native-only Google Sign-In on Web so it never leaks into webpack
       '@react-native-google-signin/google-signin$': path.resolve(__dirname, 'src/services/googleSigninWebStub.js'),
