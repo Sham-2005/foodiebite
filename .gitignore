@@ -51,6 +51,7 @@ uploads/*
 
 # Temporary and scratch files
 scratch/
+**/scratch/
 .tempmediaStorage/
 .temp/
 supabase/.temp/
