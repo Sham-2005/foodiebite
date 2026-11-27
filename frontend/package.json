@@ -25,6 +25,7 @@
     "css-loader": "^6.10.0",
     "html-webpack-plugin": "^5.6.0",
     "lucide-react-native": "^0.383.0",
+    "proxy-addr": "^2.0.7",
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-native": "0.73.6",
@@ -36,7 +37,9 @@
     "react-native-screens": "3.29.0",
     "react-native-svg": "^14.1.0",
     "react-native-url-polyfill": "2.0.0",
+    "proxy-addr": "^2.0.8",
     "react-native-web": "0.19.10",
+    "shell-quote": "^1.12.0",
     "style-loader": "^3.3.4",
     "tesseract.js": "^7.0.0",
     "webpack": "^5.90.1",
@@ -48,5 +51,11 @@
     "@types/node": "^25.9.1",
     "typescript": "^6.0.3",
     "webpack-dev-server": "^5.0.2"
+  },
+  "overrides": {
+    "proxy-addr": "$proxy-addr",
+    "shell-quote": "$shell-quote",
+    "@fastify/busboy": "^3.2.6",
+    "busboy": "^1.6.0"
   }
 }

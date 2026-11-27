@@ -254,47 +254,88 @@ async function runAllTests() {
   // ── GROUP 5: Notification Settings & Scheduling ───────────
   console.log('\n[5. NOTIFICATION SETTINGS & EMAIL PERSISTENCE]');
 
-  await runTest('Retrieves persistent notification settings', async () => {
-    const req = { user: { email: AUTHORIZED_ADMIN, role: 'admin' } };
-    let statusSent = null;
-    let jsonSent = null;
-    const res = {
-      status: (c) => { statusSent = c; return res; },
-      json: (d) => { jsonSent = d; }
-    };
+  const supabaseConfig = require('../../config/supabase');
+  const mockSystemSettings = new Map();
+  let mockInjected = false;
 
-    await adminController.getNotificationSettings(req, res);
-    assert.strictEqual(statusSent, 200);
-    assert.strictEqual(jsonSent.success, true);
-    assert.strictEqual(typeof jsonSent.settings.welcomeEmailEnabled, 'boolean');
-    assert.strictEqual(typeof jsonSent.settings.dailyRecommendationsEnabled, 'boolean');
-  });
+  if (!supabaseConfig.isSupabaseConfigured || !supabaseConfig.getSupabaseAdmin()) {
+    mockInjected = true;
+    supabaseConfig.setMockSupabaseAdmin({
+      from: (table) => {
+        if (table === 'system_settings') {
+          let filterKey = null;
+          const builder = {
+            select: () => builder,
+            eq: (col, val) => {
+              if (col === 'key') filterKey = val;
+              return builder;
+            },
+            maybeSingle: async () => {
+              const val = mockSystemSettings.get(filterKey);
+              return { data: val ? { value: val } : null, error: null };
+            },
+            upsert: async (row) => {
+              mockSystemSettings.set(row.key, row.value);
+              return { data: row, error: null };
+            }
+          };
+          return builder;
+        }
+        return {
+          select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+          upsert: async () => ({ error: null })
+        };
+      }
+    });
+  }
 
-  await runTest('Updates and persists notification preferences', async () => {
-    const newSettings = {
-      welcomeEmailEnabled: true,
-      dailyRecommendationsEnabled: true,
-      dailyRecommendationSchedule: '0 8 * * *',
-      marketingEmailsEnabled: false,
-      securityAlertsEnabled: true,
-      adminFeedbackAlertsEnabled: true
-    };
-    const req = {
-      user: { email: AUTHORIZED_ADMIN, role: 'admin' },
-      body: newSettings
-    };
-    let statusSent = null;
-    let jsonSent = null;
-    const res = {
-      status: (c) => { statusSent = c; return res; },
-      json: (d) => { jsonSent = d; }
-    };
+  try {
+    await runTest('Retrieves persistent notification settings', async () => {
+      const req = { user: { email: AUTHORIZED_ADMIN, role: 'admin' } };
+      let statusSent = null;
+      let jsonSent = null;
+      const res = {
+        status: (c) => { statusSent = c; return res; },
+        json: (d) => { jsonSent = d; }
+      };
 
-    await adminController.updateNotificationSettings(req, res);
-    assert.strictEqual(statusSent, 200);
-    assert.strictEqual(jsonSent.success, true);
-    assert.strictEqual(jsonSent.settings.dailyRecommendationSchedule, '0 8 * * *');
-  });
+      await adminController.getNotificationSettings(req, res);
+      assert.strictEqual(statusSent, 200);
+      assert.strictEqual(jsonSent.success, true);
+      assert.strictEqual(typeof jsonSent.settings.welcomeEmailEnabled, 'boolean');
+      assert.strictEqual(typeof jsonSent.settings.dailyRecommendationsEnabled, 'boolean');
+    });
+
+    await runTest('Updates and persists notification preferences', async () => {
+      const newSettings = {
+        welcomeEmailEnabled: true,
+        dailyRecommendationsEnabled: true,
+        dailyRecommendationSchedule: '0 8 * * *',
+        marketingEmailsEnabled: false,
+        securityAlertsEnabled: true,
+        adminFeedbackAlertsEnabled: true
+      };
+      const req = {
+        user: { email: AUTHORIZED_ADMIN, role: 'admin' },
+        body: newSettings
+      };
+      let statusSent = null;
+      let jsonSent = null;
+      const res = {
+        status: (c) => { statusSent = c; return res; },
+        json: (d) => { jsonSent = d; }
+      };
+
+      await adminController.updateNotificationSettings(req, res);
+      assert.strictEqual(statusSent, 200);
+      assert.strictEqual(jsonSent.success, true);
+      assert.strictEqual(jsonSent.settings.dailyRecommendationSchedule, '0 8 * * *');
+    });
+  } finally {
+    if (mockInjected) {
+      supabaseConfig.setMockSupabaseAdmin(null);
+    }
+  }
 
   // ── SUMMARY ────────────────────────────────────────────────
   console.log('\n======================================================');

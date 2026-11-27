@@ -302,17 +302,47 @@ async function runAllTests() {
   await runTest('Provider Fallback: Fallback dispatch operates seamlessly when secondary provider is engaged', async () => {
     assert.strictEqual(typeof emailAutomationService.dispatchEmailWithProviderFallback, 'function', 'dispatchEmailWithProviderFallback must be exported');
 
-    // Test dispatch with Brevo/Resend fallback
-    const fallbackRes = await emailAutomationService.dispatchEmailWithProviderFallback({
-      to: process.env.TEST_EMAIL_RECIPIENT || 'delivered@resend.dev',
-      subject: '[Test Suite] Multi-Provider Fallback Verification',
-      html: '<p>Testing automated provider fallback architecture</p>',
-      text: 'Testing automated provider fallback architecture',
-      userName: 'Test Verifier'
-    });
+    const hasLiveProvider = Boolean(process.env.BREVO_API_KEY || process.env.RESEND_API_KEY || (process.env.SMTP_USER && process.env.SMTP_PASS));
 
-    assert.ok(fallbackRes.messageId, 'Must return a confirmed provider message ID');
-    assert.ok(['resend', 'brevo', 'smtp'].includes(fallbackRes.provider), 'Provider must be resend, brevo, or smtp');
+    if (!hasLiveProvider) {
+      console.log('     -> [MOCK] No live email provider credentials in CI; testing fallback architecture with isolated mock provider');
+      const brevoService = require('../brevoService');
+      const originalBrevoSend = brevoService.sendTransactionalEmail;
+      const originalBrevoKey = process.env.BREVO_API_KEY;
+      try {
+        process.env.BREVO_API_KEY = 'mock_ci_brevo_key';
+        brevoService.sendTransactionalEmail = async () => ({
+          success: true,
+          messageId: '<ci-mock-fallback-msg-id@brevo.test>'
+        });
+        const fallbackRes = await emailAutomationService.dispatchEmailWithProviderFallback({
+          to: 'delivered@resend.dev',
+          subject: '[Test Suite] Multi-Provider Fallback Verification',
+          html: '<p>Testing automated provider fallback architecture</p>',
+          text: 'Testing automated provider fallback architecture',
+          userName: 'Test Verifier'
+        });
+        assert.ok(fallbackRes.messageId, 'Must return a confirmed provider message ID');
+        assert.ok(['resend', 'brevo', 'smtp'].includes(fallbackRes.provider), 'Provider must be resend, brevo, or smtp');
+      } finally {
+        brevoService.sendTransactionalEmail = originalBrevoSend;
+        if (originalBrevoKey === undefined) {
+          delete process.env.BREVO_API_KEY;
+        } else {
+          process.env.BREVO_API_KEY = originalBrevoKey;
+        }
+      }
+    } else {
+      const fallbackRes = await emailAutomationService.dispatchEmailWithProviderFallback({
+        to: process.env.TEST_EMAIL_RECIPIENT || 'delivered@resend.dev',
+        subject: '[Test Suite] Multi-Provider Fallback Verification',
+        html: '<p>Testing automated provider fallback architecture</p>',
+        text: 'Testing automated provider fallback architecture',
+        userName: 'Test Verifier'
+      });
+      assert.ok(fallbackRes.messageId, 'Must return a confirmed provider message ID');
+      assert.ok(['resend', 'brevo', 'smtp'].includes(fallbackRes.provider), 'Provider must be resend, brevo, or smtp');
+    }
   });
 
   // Test 12: Retry Eligibility Preservation on Send Failure

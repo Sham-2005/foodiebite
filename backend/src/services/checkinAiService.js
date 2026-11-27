@@ -471,13 +471,30 @@ Provide your structured wellness analysis.`;
     }
 
     const parsed = JSON.parse(content);
-    if (parsed && parsed.wellnessSummary) {
+    if (parsed && (parsed.wellnessSummary || parsed.summary || parsed.executive_summary)) {
+      const positiveTrends = Array.isArray(parsed.positiveTrends) ? parsed.positiveTrends : fallback.positiveTrends;
+      const areasToMonitor = Array.isArray(parsed.areasToMonitor) ? parsed.areasToMonitor : fallback.areasToMonitor;
+      const decliningTrends = Array.isArray(parsed.decliningTrends) ? parsed.decliningTrends : fallback.decliningTrends;
+
+      const summaryCandidate = String(parsed.wellnessSummary || parsed.executive_summary || parsed.summary || '').trim();
+      const summaryText = summaryCandidate.length >= 30
+        ? summaryCandidate
+        : (summaryCandidate ? `${summaryCandidate} ${fallback.wellnessSummary}` : fallback.wellnessSummary);
+
       return {
-        wellnessSummary: parsed.wellnessSummary,
+        ...fallback,
+        wellnessSummary: summaryText,
+        executive_summary: summaryText,
+        overall_wellness_score: fallback.overall_wellness_score,
+        overallWellnessScore: fallback.overallWellnessScore,
+        wellness_category: fallback.wellness_category,
+        wellnessCategory: fallback.wellnessCategory,
+        key_strengths: positiveTrends,
+        primary_concerns: areasToMonitor,
         currentObservations: Array.isArray(parsed.currentObservations) ? parsed.currentObservations : fallback.currentObservations,
-        positiveTrends: Array.isArray(parsed.positiveTrends) ? parsed.positiveTrends : fallback.positiveTrends,
-        decliningTrends: Array.isArray(parsed.decliningTrends) ? parsed.decliningTrends : fallback.decliningTrends,
-        areasToMonitor: Array.isArray(parsed.areasToMonitor) ? parsed.areasToMonitor : fallback.areasToMonitor,
+        positiveTrends,
+        decliningTrends,
+        areasToMonitor,
         sleepObservations: Array.isArray(parsed.sleepObservations) ? parsed.sleepObservations : fallback.sleepObservations,
         energyObservations: Array.isArray(parsed.energyObservations) ? parsed.energyObservations : fallback.energyObservations,
         dietObservations: Array.isArray(parsed.dietObservations) ? parsed.dietObservations : fallback.dietObservations,
@@ -485,9 +502,14 @@ Provide your structured wellness analysis.`;
         activityObservations: Array.isArray(parsed.activityObservations) ? parsed.activityObservations : fallback.activityObservations,
         dietarySuggestions: Array.isArray(parsed.dietarySuggestions) ? parsed.dietarySuggestions : fallback.dietarySuggestions,
         recommendedFoodCategories: Array.isArray(parsed.recommendedFoodCategories) ? parsed.recommendedFoodCategories : fallback.recommendedFoodCategories,
-        trendAssessment: ['Improving', 'Stable', 'Declining', 'Fluctuating', 'Baseline'].includes(parsed.trendAssessment) ? parsed.trendAssessment : 'Stable',
+        trendAssessment: ['Improving', 'Stable', 'Declining', 'Fluctuating', 'Baseline'].includes(parsed.trendAssessment) ? parsed.trendAssessment : fallback.trendAssessment,
         limitations: parsed.limitations || fallback.limitations,
-        medicalDisclaimer: parsed.medicalDisclaimer || fallback.medicalDisclaimer,
+        medicalDisclaimer: (parsed.medicalDisclaimer && parsed.medicalDisclaimer.includes('FoodieBite'))
+          ? parsed.medicalDisclaimer
+          : (parsed.medicalDisclaimer ? `${parsed.medicalDisclaimer} FoodieBite is general wellness guidance, not a medical diagnosis.` : fallback.medicalDisclaimer),
+        disclaimer: (parsed.medicalDisclaimer && parsed.medicalDisclaimer.includes('FoodieBite'))
+          ? parsed.medicalDisclaimer
+          : (parsed.medicalDisclaimer ? `${parsed.medicalDisclaimer} FoodieBite is general wellness guidance, not a medical diagnosis.` : fallback.disclaimer),
         _modelUsed: result.model || 'ollama:qwen2.5:0.5b'
       };
     }

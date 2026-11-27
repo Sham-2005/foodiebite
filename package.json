@@ -42,5 +42,15 @@
   },
   "devDependencies": {
     "exceljs": "^4.4.0"
+  },
+  "overrides": {
+    "proxy-addr": "$proxy-addr",
+    "shell-quote": "$shell-quote",
+    "@fastify/busboy": "^3.2.6",
+    "busboy": "^1.6.0"
+  },
+  "dependencies": {
+    "proxy-addr": "^2.0.8",
+    "shell-quote": "^1.12.0"
   }
 }

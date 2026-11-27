@@ -41,8 +41,8 @@ jobs:
 
       - name: 📦 Install Dependencies
         run: |
-          npm install --no-audit --include=dev
-          cd backend && npm install --no-audit
+          npm ci || npm install --no-audit --include=dev
+          cd backend && (npm ci || npm install --no-audit)
           pip install pyyaml openpyxl
 
       - name: 🔍 Validate All Workflow YAML Files
