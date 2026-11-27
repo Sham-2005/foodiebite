@@ -97,12 +97,22 @@ function getUserSupabaseClient(userToken) {
   });
 }
 
+let mockSupabaseAdmin = null;
+
+/**
+ * Sets or clears a mock Supabase admin client for isolated unit testing.
+ * @param {object|null} mock
+ */
+function setMockSupabaseAdmin(mock) {
+  mockSupabaseAdmin = mock;
+}
+
 /**
  * Returns the privileged admin Supabase client (service role) if configured,
- * or falls back to the standard client.
+ * or falls back to standard client or test mock if injected.
  */
 function getSupabaseAdmin() {
-  return supabaseAdminClient || supabaseClient;
+  return mockSupabaseAdmin || supabaseAdminClient || supabaseClient;
 }
 
 module.exports = {
@@ -110,6 +120,7 @@ module.exports = {
   getSupabaseClient,
   getUserSupabaseClient,
   getSupabaseAdmin,
+  setMockSupabaseAdmin,
   supabaseUrl,
   supabaseKey,
 };

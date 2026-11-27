@@ -42,8 +42,8 @@ jobs:
 
       - name: 📦 Install Root & Backend Dependencies
         run: |
-          npm install --no-audit --include=dev
-          cd backend && npm install --no-audit
+          npm ci || npm install --no-audit --include=dev
+          cd backend && (npm ci || npm install --no-audit)
 
       # ── TEST 1: Dietary Safety, Allergen Exclusions & Unit Conversions ───────
       - name: "🥗 Test 1: Dietary Safety & Unit Conversions Suite"

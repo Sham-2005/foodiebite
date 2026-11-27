@@ -319,7 +319,7 @@ class HealthCheckinStore {
           .select('*')
           .eq('checkin_id', checkinId);
 
-        if (!error && Array.isArray(data)) {
+        if (!error && Array.isArray(data) && data.length > 0) {
           data.forEach(item => memoryStore.answers.set(item.id, item));
           return data;
         }
@@ -514,7 +514,7 @@ class HealthCheckinStore {
         if (userId) query = query.eq('user_id', userId);
 
         const { data, error } = await query;
-        if (!error && Array.isArray(data)) {
+        if (!error && Array.isArray(data) && data.length > 0) {
           return data.map(item => ({
             id: item.id,
             userId: item.user_id,

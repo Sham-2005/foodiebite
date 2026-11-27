@@ -157,15 +157,24 @@ function runSuiteFile(fileConfig) {
         details: 'Assertion passed successfully'
       });
     } else if (line.includes('✗') || line.startsWith('FAIL') || line.includes('❌')) {
-      const name = line.replace(/^.*?(✗|FAIL:|❌)\s*/, '').trim();
-      testCases.push({
-        name,
-        category: currentCategory,
-        file: path.basename(fileConfig.path),
-        status: 'FAIL',
-        durationMs: Math.max(1, Math.round(durationMs / Math.max(testCases.length + 1, 1))),
-        details: line
-      });
+      // Exclude summary lines like "Results: 15/16 tests passed", "Failed 0 tests", "❌ Failed 1 tests."
+      const isSummaryLine = /^(results|total|failed\s+\d+|tests\s+passed|grand\s+total|suite\s+\d+|all\s+.*passed)/i.test(line.replace(/^[✗❌\s]+/, '').trim())
+        || /failed:\s*0/i.test(line)
+        || /failed\s+\d+\s+tests/i.test(line);
+
+      if (!isSummaryLine) {
+        const name = line.replace(/^.*?(✗|FAIL:|❌)\s*/, '').trim();
+        if (name && name.length > 2) {
+          testCases.push({
+            name,
+            category: currentCategory,
+            file: path.basename(fileConfig.path),
+            status: 'FAIL',
+            durationMs: Math.max(1, Math.round(durationMs / Math.max(testCases.length + 1, 1))),
+            details: line
+          });
+        }
+      }
     }
   }
 
